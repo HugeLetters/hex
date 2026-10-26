@@ -266,7 +266,7 @@ key with its kind and description; `hex settings list --json` adds `choices`.
 On macOS, `keyboard_model_switching.enabled` opts into switching the shared
 speech-model picker on keyboard input-source changes. The JSON setting
 `keyboard_model_switching.mappings` maps enabled input-source IDs to model IDs,
-for example `{"com.apple.keylayout.Russian":"parakeet_v3"}`. Omit a source for
+for example `{"com.apple.keylayout.Spanish":"parakeet_v3"}`. Omit a source for
 "Don't switch". Automatic switches verify installed models only; they never
 download them. Enabling or editing the active mapping applies it immediately;
 launching Hex does not reapply it. Other platforms retain the settings but do not

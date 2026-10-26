@@ -1900,7 +1900,7 @@ mod tests {
         assert!(settings.keyboard_model_switching.mappings.is_empty());
         settings.keyboard_model_switching.enabled = true;
         settings.keyboard_model_switching.mappings.insert(
-            "com.apple.keylayout.Russian".into(),
+            "com.apple.keylayout.Spanish".into(),
             TranscriptionModelId::ParakeetV3,
         );
         let restored: AppSettings =

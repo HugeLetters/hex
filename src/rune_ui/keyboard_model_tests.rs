@@ -51,8 +51,8 @@ fn keyboard_model_switching_is_a_macos_only_saved_opt_in() {
 fn keyboard_model_switching_maps_enabled_sources_to_installed_models_or_no_switch() {
     let mut rt = runtime("mac-settings");
     rt.state.platform.input_sources = vec![crate::keyboard_model_switching::InputSource {
-        id: "com.apple.keylayout.Russian".into(),
-        name: "Russian".into(),
+        id: "com.apple.keylayout.Spanish".into(),
+        name: "Spanish".into(),
     }];
     rt.state.picker.installed = Some(vec![TranscriptionModelId::ParakeetV3]);
     rt.invalidate();
@@ -65,7 +65,7 @@ fn keyboard_model_switching_maps_enabled_sources_to_installed_models_or_no_switc
             .settings
             .keyboard_model_switching
             .mappings
-            .get("com.apple.keylayout.Russian"),
+            .get("com.apple.keylayout.Spanish"),
         Some(&TranscriptionModelId::ParakeetV3)
     );
     tap(&mut rt, "input-source-model0-trigger");

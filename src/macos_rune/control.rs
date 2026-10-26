@@ -842,7 +842,7 @@ mod tests {
         settings
             .keyboard_model_switching
             .mappings
-            .insert("Russian".into(), TranscriptionModelId::ParakeetV3);
+            .insert("Spanish".into(), TranscriptionModelId::ParakeetV3);
         let expected = settings.transcription_for_model(TranscriptionModelId::ParakeetV3);
         let mut runtime = super::super::Runtime {
             keyboard_switcher: crate::keyboard_model_switching::Switcher::new(
@@ -858,7 +858,7 @@ mod tests {
             "ABC".into(),
         )));
         runtime.handle(super::super::Request::InputSourceChanged(Some(
-            "Russian".into(),
+            "Spanish".into(),
         )));
         runtime.tick_at(std::time::Instant::now() + Duration::from_secs(1));
         assert_eq!(
@@ -893,7 +893,7 @@ mod tests {
         let settings = crate::app_settings::AppSettings {
             keyboard_model_switching: crate::app_settings::KeyboardModelSwitching {
                 enabled: true,
-                mappings: [("Russian".into(), TranscriptionModelId::ParakeetV3)].into(),
+                mappings: [("Spanish".into(), TranscriptionModelId::ParakeetV3)].into(),
             },
             ..Default::default()
         };
@@ -911,7 +911,7 @@ mod tests {
             recognition_start: None,
         };
         runtime.handle(super::super::Request::InputSourceChanged(Some(
-            "Russian".into(),
+            "Spanish".into(),
         )));
         runtime.handle(super::use_request(runtime.settings.transcription.clone()));
         assert_eq!(runtime.preparation.status().model, None);
@@ -1000,7 +1000,7 @@ mod tests {
         let settings = crate::app_settings::AppSettings {
             keyboard_model_switching: crate::app_settings::KeyboardModelSwitching {
                 enabled: true,
-                mappings: [("Russian".into(), TranscriptionModelId::ParakeetV3)].into(),
+                mappings: [("Spanish".into(), TranscriptionModelId::ParakeetV3)].into(),
             },
             ..Default::default()
         };
@@ -1023,7 +1023,7 @@ mod tests {
             TranscriptionModelId::WhisperLargeV3Turbo
         );
         runtime.handle(super::super::Request::InputSourceChanged(Some(
-            "Russian".into(),
+            "Spanish".into(),
         )));
         assert_eq!(
             runtime.preparation.status().model,
@@ -1089,7 +1089,7 @@ mod tests {
                 },
                 keyboard_model_switching: crate::app_settings::KeyboardModelSwitching {
                     enabled: true,
-                    mappings: [("Russian".into(), mapped)].into(),
+                    mappings: [("Spanish".into(), mapped)].into(),
                 },
                 ..Default::default()
             };
@@ -1112,7 +1112,7 @@ mod tests {
                 (TranscriptionModelId::WhisperLargeV3Turbo, false)
             );
             runtime.handle(super::super::Request::InputSourceChanged(Some(
-                "Russian".into(),
+                "Spanish".into(),
             )));
             assert_eq!(
                 runtime.preparation.status().model,

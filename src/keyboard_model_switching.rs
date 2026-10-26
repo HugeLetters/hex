@@ -86,13 +86,13 @@ mod tests {
         let now = Instant::now();
         let mut settings = KeyboardModelSwitching {
             enabled: true,
-            mappings: [("Russian".into(), TranscriptionModelId::ParakeetV3)].into(),
+            mappings: [("Spanish".into(), TranscriptionModelId::ParakeetV3)].into(),
         };
-        let mut switcher = Switcher::new(settings.clone(), Some("Russian".into()));
+        let mut switcher = Switcher::new(settings.clone(), Some("Spanish".into()));
         assert_eq!(switcher.take_due(now + Duration::from_secs(1)), None);
         settings
             .mappings
-            .insert("Russian".into(), TranscriptionModelId::WhisperLargeV3Turbo);
+            .insert("Spanish".into(), TranscriptionModelId::WhisperLargeV3Turbo);
         assert!(switcher.configure(settings, now));
         assert_eq!(
             switcher.take_due(now),
@@ -104,13 +104,13 @@ mod tests {
     fn startup_preserves_manual_selection_and_source_changes_are_debounced() {
         let settings = KeyboardModelSwitching {
             enabled: true,
-            mappings: [("Russian".into(), TranscriptionModelId::ParakeetV3)].into(),
+            mappings: [("Spanish".into(), TranscriptionModelId::ParakeetV3)].into(),
         };
         let now = Instant::now();
         let mut switcher = Switcher::new(settings, Some("ABC".into()));
         assert!(!switcher.source_changed(Some("ABC".into()), now));
         assert_eq!(switcher.take_due(now + Duration::from_secs(1)), None);
-        assert!(switcher.source_changed(Some("Russian".into()), now));
+        assert!(switcher.source_changed(Some("Spanish".into()), now));
         assert_eq!(switcher.take_due(now + Duration::from_millis(299)), None);
         assert_eq!(
             switcher.take_due(now + Duration::from_millis(300)),
@@ -125,27 +125,27 @@ mod tests {
         let mut switcher = Switcher::new(
             KeyboardModelSwitching {
                 enabled: true,
-                mappings: [("Russian".into(), TranscriptionModelId::ParakeetV3)].into(),
+                mappings: [("Spanish".into(), TranscriptionModelId::ParakeetV3)].into(),
             },
             Some("ABC".into()),
         );
         switcher.source_changed(Some("ABC".into()), now);
-        switcher.source_changed(Some("Russian".into()), now);
+        switcher.source_changed(Some("Spanish".into()), now);
         switcher.manual_choice();
         assert_eq!(switcher.take_due(now + Duration::from_secs(1)), None);
         // Duplicate native notifications must not undo the manual choice.
-        assert!(!switcher.source_changed(Some("Russian".into()), now));
+        assert!(!switcher.source_changed(Some("Spanish".into()), now));
         assert_eq!(switcher.take_due(now + Duration::from_secs(2)), None);
     }
 
     #[test]
     fn enabling_or_editing_the_active_mapping_applies_now_but_other_edits_do_not() {
         let now = Instant::now();
-        let mut switcher = Switcher::new(KeyboardModelSwitching::default(), Some("Russian".into()));
-        switcher.source_changed(Some("Russian".into()), now);
+        let mut switcher = Switcher::new(KeyboardModelSwitching::default(), Some("Spanish".into()));
+        switcher.source_changed(Some("Spanish".into()), now);
         let mut settings = KeyboardModelSwitching {
             enabled: true,
-            mappings: [("Russian".into(), TranscriptionModelId::ParakeetV3)].into(),
+            mappings: [("Spanish".into(), TranscriptionModelId::ParakeetV3)].into(),
         };
         assert!(switcher.configure(settings.clone(), now));
         assert_eq!(
@@ -159,7 +159,7 @@ mod tests {
         assert_eq!(switcher.take_due(now), None);
         settings
             .mappings
-            .insert("Russian".into(), TranscriptionModelId::WhisperLargeV3Turbo);
+            .insert("Spanish".into(), TranscriptionModelId::WhisperLargeV3Turbo);
         assert!(switcher.configure(settings.clone(), now));
         assert_eq!(
             switcher.take_due(now),
@@ -177,22 +177,22 @@ mod tests {
             KeyboardModelSwitching {
                 enabled: true,
                 mappings: [
-                    ("Spanish".into(), TranscriptionModelId::WhisperLargeV3Turbo),
-                    ("Russian".into(), TranscriptionModelId::ParakeetV3),
+                    ("French".into(), TranscriptionModelId::WhisperLargeV3Turbo),
+                    ("Spanish".into(), TranscriptionModelId::ParakeetV3),
                 ]
                 .into(),
             },
             Some("ABC".into()),
         );
         switcher.source_changed(Some("ABC".into()), now);
-        switcher.source_changed(Some("Spanish".into()), now);
-        switcher.source_changed(Some("Russian".into()), now + Duration::from_millis(100));
+        switcher.source_changed(Some("French".into()), now);
+        switcher.source_changed(Some("Spanish".into()), now + Duration::from_millis(100));
         assert_eq!(switcher.take_due(now + Duration::from_millis(300)), None);
         assert_eq!(
             switcher.take_due(now + Duration::from_millis(400)),
             Some(TranscriptionModelId::ParakeetV3)
         );
-        switcher.source_changed(Some("Spanish".into()), now + Duration::from_secs(1));
+        switcher.source_changed(Some("French".into()), now + Duration::from_secs(1));
         switcher.source_changed(Some("ABC".into()), now + Duration::from_millis(1100));
         assert_eq!(switcher.take_due(now + Duration::from_secs(2)), None);
     }
@@ -202,16 +202,16 @@ mod tests {
         let now = Instant::now();
         let mut settings = KeyboardModelSwitching {
             enabled: true,
-            mappings: [("Russian".into(), TranscriptionModelId::ParakeetV3)].into(),
+            mappings: [("Spanish".into(), TranscriptionModelId::ParakeetV3)].into(),
         };
         let mut switcher = Switcher::new(settings.clone(), Some("ABC".into()));
         switcher.source_changed(Some("ABC".into()), now);
-        switcher.source_changed(Some("Russian".into()), now);
+        switcher.source_changed(Some("Spanish".into()), now);
         settings.enabled = false;
         switcher.configure(settings, now + Duration::from_millis(100));
         assert_eq!(switcher.take_due(now + Duration::from_secs(1)), None);
         switcher.source_changed(Some("ABC".into()), now);
-        switcher.source_changed(Some("Russian".into()), now);
+        switcher.source_changed(Some("Spanish".into()), now);
         assert_eq!(switcher.take_due(now + Duration::from_secs(2)), None);
     }
 }

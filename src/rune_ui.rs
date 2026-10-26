@@ -1433,15 +1433,15 @@ const SCENES: &[Scene] = &[
                 TranscriptionModelId::ParakeetUnifiedEnglish,
             ),
             (
-                "com.apple.keylayout.Russian".into(),
+                "com.apple.keylayout.Spanish".into(),
                 TranscriptionModelId::ParakeetV3,
             ),
         ]
         .into();
         ui.platform.input_sources = [
             ("com.apple.keylayout.ABC", "ABC"),
-            ("com.apple.keylayout.Russian", "Russian"),
             ("com.apple.keylayout.Spanish", "Spanish"),
+            ("com.apple.keylayout.French", "French"),
         ]
         .into_iter()
         .map(|(id, name)| crate::keyboard_model_switching::InputSource {

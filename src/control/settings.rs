@@ -867,7 +867,7 @@ mod tests {
         let change = apply(
             &settings,
             "keyboard_model_switching.mappings",
-            r#"{"com.apple.keylayout.Russian":"parakeet_v3"}"#,
+            r#"{"com.apple.keylayout.Spanish":"parakeet_v3"}"#,
             false,
             &rules(),
         )
@@ -877,14 +877,14 @@ mod tests {
                 .settings
                 .keyboard_model_switching
                 .mappings
-                .get("com.apple.keylayout.Russian"),
+                .get("com.apple.keylayout.Spanish"),
             Some(&crate::transcription_models::TranscriptionModelId::ParakeetV3)
         );
         assert!(
             apply(
                 &settings,
                 "keyboard_model_switching.mappings",
-                r#"{"Russian":"unknown-model"}"#,
+                r#"{"Spanish":"unknown-model"}"#,
                 false,
                 &rules()
             )
