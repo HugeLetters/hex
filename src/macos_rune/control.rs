@@ -185,8 +185,7 @@ impl Pump {
                         ),
                     ));
                 }
-                background(reply, move || use_model(&runtime, selection));
-                None
+                start_model_use(runtime, selection, reply)
             }
             ControlCommand::ModelInstall { model, language } => {
                 let selection = match load().and_then(|settings| {
@@ -197,8 +196,7 @@ impl Pump {
                 };
                 let definition = crate::transcription_models::definition(selection.model);
                 if crate::transcription_models::is_installed(definition, &selection.language) {
-                    background(reply, move || use_model(&runtime, selection));
-                    return None;
+                    return start_model_use(runtime, selection, reply);
                 }
                 Some(reply_with(
                     runtime
@@ -589,8 +587,22 @@ fn use_request(selection: crate::transcription_models::TranscriptionSelection) -
     Request::UseInstalledSelection(selection)
 }
 
-/// Switches to an installed model and waits until it's loaded.
-fn use_model(
+/// Admit on the main thread, even for an unchanged selection, before spawning
+/// the waiter. An idempotent manual choice still cancels automatic work.
+fn start_model_use(
+    runtime: RuntimeHandle,
+    selection: crate::transcription_models::TranscriptionSelection,
+    reply: &SyncSender<ControlResponse>,
+) -> Option<ControlReply> {
+    if let Err(error) = runtime.send(use_request(selection.clone())) {
+        return Some(ControlReply::error("unavailable", error.to_string()));
+    }
+    background(reply, move || wait_for_model(&runtime, selection));
+    None
+}
+
+/// Waits for an already-admitted installed-model choice without blocking AppKit.
+fn wait_for_model(
     runtime: &RuntimeHandle,
     selection: crate::transcription_models::TranscriptionSelection,
 ) -> Result<ControlReply, ControlError> {
@@ -605,9 +617,6 @@ fn use_model(
             selection.language
         )));
     }
-    runtime
-        .send(use_request(selection.clone()))
-        .map_err(|error| ControlError::new("unavailable", error.to_string()))?;
     let started = Instant::now();
     let mut seen_preparing = false;
     while started.elapsed() < CONFIRM_WAIT {
@@ -791,6 +800,11 @@ mod tests {
         ));
         let mut runtime = super::super::Runtime {
             settings: Default::default(),
+            keyboard_switcher: crate::keyboard_model_switching::Switcher::new(
+                Default::default(),
+                None,
+            ),
+            automatic_preparation: false,
             preparation,
             recognition_start: None,
         };
@@ -804,6 +818,108 @@ mod tests {
         assert_eq!(
             prepared.recv_timeout(Duration::from_secs(3)).unwrap(),
             (selection, true)
+        );
+    }
+
+    #[test]
+    fn input_source_choices_use_installed_only_preparation_and_manual_choices_supersede_them() {
+        let (sender, prepared) = mpsc::channel();
+        let (release, releases) = mpsc::channel();
+        let releases = std::sync::Mutex::new(releases);
+        let preparation = TranscriptionPreparation::with_prepare(Arc::new(
+            move |selection, installed_only, _, _| {
+                sender.send((selection.clone(), installed_only)).unwrap();
+                releases
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(3))
+                    .unwrap();
+                Ok(())
+            },
+        ));
+        let mut settings = crate::app_settings::AppSettings::default();
+        settings.keyboard_model_switching.enabled = true;
+        settings
+            .keyboard_model_switching
+            .mappings
+            .insert("Russian".into(), TranscriptionModelId::ParakeetV3);
+        let expected = settings.transcription_for_model(TranscriptionModelId::ParakeetV3);
+        let mut runtime = super::super::Runtime {
+            keyboard_switcher: crate::keyboard_model_switching::Switcher::new(
+                settings.keyboard_model_switching.clone(),
+                Some("ABC".into()),
+            ),
+            automatic_preparation: false,
+            settings,
+            preparation,
+            recognition_start: None,
+        };
+        runtime.handle(super::super::Request::InputSourceChanged(Some(
+            "ABC".into(),
+        )));
+        runtime.handle(super::super::Request::InputSourceChanged(Some(
+            "Russian".into(),
+        )));
+        runtime.tick_at(std::time::Instant::now() + Duration::from_secs(1));
+        assert_eq!(
+            prepared.recv_timeout(Duration::from_secs(3)).unwrap(),
+            (expected, true)
+        );
+        let manual = TranscriptionSelection {
+            model: TranscriptionModelId::WhisperLargeV3Turbo,
+            language: "de".into(),
+            recognition_hints: "Kit".into(),
+        };
+        runtime.handle(super::use_request(manual.clone()));
+        release.send(()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            assert!(
+                runtime.preparation.poll().is_none(),
+                "automatic choice escaped cancellation"
+            );
+            if let Ok(selection) = prepared.try_recv() {
+                assert_eq!(selection, (manual, true));
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        release.send(()).unwrap();
+    }
+
+    #[test]
+    fn choosing_the_current_model_cancels_a_debounced_automatic_choice_without_loading() {
+        let settings = crate::app_settings::AppSettings {
+            keyboard_model_switching: crate::app_settings::KeyboardModelSwitching {
+                enabled: true,
+                mappings: [("Russian".into(), TranscriptionModelId::ParakeetV3)].into(),
+            },
+            ..Default::default()
+        };
+        let preparation = TranscriptionPreparation::with_prepare(Arc::new(|_, _, _, _| {
+            panic!("an unchanged manual selection must not load a model");
+        }));
+        let mut runtime = super::super::Runtime {
+            keyboard_switcher: crate::keyboard_model_switching::Switcher::new(
+                settings.keyboard_model_switching.clone(),
+                Some("ABC".into()),
+            ),
+            automatic_preparation: false,
+            settings,
+            preparation,
+            recognition_start: None,
+        };
+        runtime.handle(super::super::Request::InputSourceChanged(Some(
+            "Russian".into(),
+        )));
+        runtime.handle(super::use_request(runtime.settings.transcription.clone()));
+        assert_eq!(runtime.preparation.status().model, None);
+        assert_eq!(
+            runtime
+                .keyboard_switcher
+                .take_due(std::time::Instant::now() + Duration::from_secs(1)),
+            None
         );
     }
 }

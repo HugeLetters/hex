@@ -997,6 +997,7 @@ pub struct AppSettings {
     pub show_dock_icon: bool,
     pub transcription: TranscriptionSelection,
     pub transcription_recents: Vec<TranscriptionSelection>,
+    pub keyboard_model_switching: KeyboardModelSwitching,
     pub dictation_processing: DictationProcessingSettings,
     pub voice_action: VoiceActionSettings,
     pub history_retention: crate::history::HistoryRetention,
@@ -1061,6 +1062,7 @@ impl Default for AppSettings {
             show_dock_icon: true,
             transcription: default_transcription(),
             transcription_recents: Vec::new(),
+            keyboard_model_switching: KeyboardModelSwitching::default(),
             dictation_processing: DictationProcessingSettings::default(),
             voice_action: VoiceActionSettings::default(),
             history_retention: crate::history::HistoryRetention::default(),
@@ -1075,6 +1077,15 @@ impl Default for AppSettings {
             text_replacements: Vec::new(),
         }
     }
+}
+
+/// macOS input-source IDs mapped to installed models. An absent entry means
+/// "Don't switch"; this never changes the model merely because dictation starts.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default)]
+pub struct KeyboardModelSwitching {
+    pub enabled: bool,
+    pub mappings: std::collections::BTreeMap<String, TranscriptionModelId>,
 }
 
 /// A new install starts with the model recommended for the person's
@@ -1881,6 +1892,24 @@ pub(crate) fn migrate_legacy_settings(path: &std::path::Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keyboard_model_switching_is_opt_in_and_source_mappings_round_trip() {
+        let mut settings: AppSettings = serde_json::from_str("{}").unwrap();
+        assert!(!settings.keyboard_model_switching.enabled);
+        assert!(settings.keyboard_model_switching.mappings.is_empty());
+        settings.keyboard_model_switching.enabled = true;
+        settings.keyboard_model_switching.mappings.insert(
+            "com.apple.keylayout.Russian".into(),
+            TranscriptionModelId::ParakeetV3,
+        );
+        let restored: AppSettings =
+            serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+        assert_eq!(
+            restored.keyboard_model_switching,
+            settings.keyboard_model_switching
+        );
+    }
 
     #[test]
     fn the_setting_the_experiment_or_an_installed_driver_turns_the_voice_filter_on() {

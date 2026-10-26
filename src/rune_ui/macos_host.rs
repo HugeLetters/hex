@@ -703,6 +703,12 @@ impl NativeHost for MacHost {
             return changed;
         }
         self.refresh_at = Instant::now() + PLATFORM_REFRESH;
+        if let Some(mtm) = objc2::MainThreadMarker::new() {
+            changed |= update(
+                &mut state.input_sources,
+                crate::keyboard_input_sources::enabled(mtm),
+            );
+        }
         changed |= self.calendar.poll(&mut state.calendar);
         changed |= update(
             &mut state.tuning,

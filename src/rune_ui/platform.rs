@@ -58,6 +58,8 @@ pub(super) struct Capabilities {
     pub(super) hud_lab: bool,
     /// Modifier-only shortcuts can require the left or right key (macOS).
     pub(super) modifier_sides: bool,
+    /// Input-source changes can operate the installed-model picker (macOS).
+    pub(super) keyboard_model_switching: bool,
 }
 
 impl Capabilities {
@@ -76,6 +78,7 @@ impl Capabilities {
         fun: false,
         hud_lab: false,
         modifier_sides: false,
+        keyboard_model_switching: false,
     };
 
     pub(super) const MACOS: Self = Self {
@@ -93,6 +96,7 @@ impl Capabilities {
         fun: true,
         hud_lab: true,
         modifier_sides: true,
+        keyboard_model_switching: true,
     };
 
     pub(super) const WINDOWS: Self = Self {
@@ -110,6 +114,7 @@ impl Capabilities {
         fun: false,
         hud_lab: false,
         modifier_sides: false,
+        keyboard_model_switching: false,
     };
 
     /// This OS's capabilities, with the rows its window host decides.
@@ -254,6 +259,7 @@ pub(super) enum Workspace {
 #[derive(Clone, Debug)]
 pub(super) struct PlatformState {
     pub(super) caps: Capabilities,
+    pub(super) input_sources: Vec<crate::keyboard_model_switching::InputSource>,
     /// Microphone, Input Monitoring, Accessibility, and whether the selected
     /// speech model is installed. Every permission is ready where the OS has
     /// none.
@@ -378,6 +384,7 @@ impl PlatformState {
     pub(super) fn new(caps: Capabilities) -> Self {
         Self {
             caps,
+            input_sources: Vec::new(),
             permissions: crate::onboarding::status_with_transcription_model(false),
             permissions_asked: Vec::new(),
             system_audio: false,

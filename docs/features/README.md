@@ -280,6 +280,47 @@ and menu choice/tag projection. These do not establish a physical menu click or
 an installed-app switch. Remembering a language does not change the language
 conditioning limitations described above.
 
+### Switch models with keyboard language
+
+```ts
+General > Switch model with keyboard language   // setup.input-source-model; macOS only, off by default
+├── Enabled keyboard input sources -> Downloaded model or Don't switch
+│   └── New/unmapped source -> Don't switch; keep the current model
+├── Source changes (shortcut, Input menu, automatic app/document switch)
+│   └── 300 ms after the last change -> Existing installed-only picker preparation
+│       ├── Success -> Save selection with the model's remembered language/hints
+│       └── Failure -> Existing picker error; no download or guessed fallback
+├── Manual model choice -> Supersede pending automatic work; do not reapply at recording start
+├── Enable, or edit the active mapping -> Apply now
+├── Disable -> Cancel automatic work; leave the selected model alone
+└── Relaunch -> Observe current source without applying it; preserve the manual choice
+```
+
+Mappings are keyed by macOS input-source IDs, not inferred speech languages or
+physical keyboard keys. The native host refreshes enabled selectable sources while
+Settings is open. Removing a source hides its row without erasing its saved mapping;
+an unavailable mapped model is labeled Not installed and can be cleared. Only
+installed GGUF models are offered, with downloads kept in the existing picker.
+
+The main-thread TIS distributed-notification observer works without a Settings
+window. A new mapped source supersedes older preparation; an unmapped source
+cancels only automatic work. Manual choices cancel the debounce too. This reuses
+the current shared model selection, recording/stream fallback, and meeting-engine
+behavior; it adds no recording-time routing, model cache, or notifications.
+
+Sources: [observer](../../src/keyboard_input_sources.rs),
+[switch policy](../../src/keyboard_model_switching.rs),
+[runtime](../../src/macos_rune.rs), and
+[settings UI](../../src/rune_ui/settings.rs).
+Checks cover persisted opt-in/mappings, startup preservation, debounce/pass-through
+sources, manual cancellation, active-mapping edits, installed-only preparation,
+and UI platform visibility/mapping edits. `mac-input-source-models` renders the
+enabled mapping table in light and dark. Native read-only probing verified enabled
+source enumeration, current-source lookup, and observer initialization/teardown.
+Real source-change notification delivery, physical menu/shortcut changes,
+automatic per-document changes, model inference, and Linux/Windows execution have
+not been smoke-tested for this feature. A fixture render is not native end-to-end proof.
+
 **Observed September 4, 2026 (2.1.16):** all 455 Rust tests
 passed in debug and release, with ten opt-in tests skipped per profile. All twelve
 keyboard-layout child scenarios passed per profile; formatting, strict

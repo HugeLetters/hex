@@ -228,6 +228,10 @@ fn tables() -> &'static [HashMap<&'static str, &'static str>; 5] {
 /// Columns: Polish, Chinese (Simplified), Japanese, German, Spanish.
 #[rustfmt::skip]
 const TRANSLATIONS: &[(&str, [&str; 5])] = &[
+    ("Don't switch", ["Nie zmieniaj", "不切换", "切り替えない", "Nicht wechseln", "No cambiar"]),
+    ("Not installed", ["Nie zainstalowano", "未安装", "未インストール", "Nicht installiert", "No instalado"]),
+    ("Switch model with keyboard language", ["Zmieniaj model z językiem klawiatury", "随键盘语言切换模型", "キーボード言語に合わせてモデルを切り替える", "Modell mit Tastatursprache wechseln", "Cambiar modelo con el idioma del teclado"]),
+    ("Changing input source selects its mapped model; manual choices still work", ["Zmiana źródła wprowadzania wybiera przypisany model; nadal można wybrać go ręcznie", "更改输入源时选择对应模型；仍可手动选择", "入力ソースを変更すると対応するモデルを選択します。手動でも選択できます", "Ein Wechsel der Eingabequelle wählt das zugeordnete Modell; manuelle Auswahl bleibt möglich", "Cambiar la fuente de entrada selecciona su modelo; la selección manual sigue disponible"]),
     ("Add application", ["Dodaj aplikację", "添加应用", "アプリを追加", "App hinzufügen", "Añadir aplicación"]),
     ("Add transformation", ["Dodaj transformację", "添加转换", "変換を追加", "Transformation hinzufügen", "Añadir transformación"]),
     ("Close", ["Zamknij", "关闭", "閉じる", "Schließen", "Cerrar"]),

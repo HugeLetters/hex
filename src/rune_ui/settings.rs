@@ -767,6 +767,35 @@ fn dictation_section(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> El {
         )
         .into(),
     );
+    if ui.platform.caps.keyboard_model_switching {
+        rows.push(
+            toggle_row(
+                p,
+                "keyboard-model-switching",
+                tr("Switch model with keyboard language"),
+                Some(tr(
+                    "Changing input source selects its mapped model; manual choices still work",
+                )),
+                settings.keyboard_model_switching.enabled,
+                |ui| {
+                    ui.open = None;
+                    ui.update(|settings| {
+                        settings.keyboard_model_switching.enabled =
+                            !settings.keyboard_model_switching.enabled;
+                    });
+                },
+            )
+            .into(),
+        );
+        rows.push(folding(
+            "input-source-mappings",
+            if settings.keyboard_model_switching.enabled {
+                input_source_rows(ui, p, layer)
+            } else {
+                Vec::new()
+            },
+        ));
+    }
     let microphone = settings
         .microphone
         .clone()
@@ -867,6 +896,87 @@ fn dictation_section(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> El {
                 .child(advanced_toggle(ui, p, pinned)),
         )
         .child(super::controls::card(p, "card", rows))
+}
+
+fn input_source_rows(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> Vec<El> {
+    ui.platform
+        .input_sources
+        .iter()
+        .enumerate()
+        .map(|(index, source)| {
+            let mapped = ui
+                .settings
+                .keyboard_model_switching
+                .mappings
+                .get(&source.id)
+                .copied();
+            let source_id = source.id.clone();
+            let mut choices = vec![Choice {
+                label: tr("Don't switch").into(),
+                selected: mapped.is_none(),
+                choose: Box::new(move |ui| {
+                    ui.open = None;
+                    ui.update(|settings| {
+                        settings
+                            .keyboard_model_switching
+                            .mappings
+                            .remove(&source_id);
+                    });
+                }),
+            }];
+            choices.extend(transcription_models::MODELS.iter().filter_map(|model| {
+                let selection = ui.settings.transcription_for_model(model.id);
+                if !model.available()
+                    || !matches!(model.runtime, transcription_models::ModelRuntime::Gguf(_))
+                    || !ui.picker.installed(model, &selection.language)
+                {
+                    return None;
+                }
+                let source_id = source.id.clone();
+                let id = model.id;
+                Some(Choice {
+                    label: model.name.into(),
+                    selected: mapped == Some(id),
+                    choose: Box::new(move |ui| {
+                        ui.open = None;
+                        ui.update(|settings| {
+                            settings
+                                .keyboard_model_switching
+                                .mappings
+                                .insert(source_id.clone(), id);
+                        });
+                    }),
+                })
+            }));
+            let label = mapped.map_or_else(
+                || tr("Don't switch").to_string(),
+                |id| {
+                    let model = transcription_models::definition(id);
+                    let selection = ui.settings.transcription_for_model(id);
+                    if ui.picker.installed(model, &selection.language) {
+                        model.name.into()
+                    } else {
+                        format!("{} · {}", model.name, tr("Not installed"))
+                    }
+                },
+            );
+            setting_row(
+                p,
+                &format!("input-source{index}"),
+                &source.name,
+                None,
+                select(
+                    p,
+                    &format!("input-source-model{index}"),
+                    &label,
+                    ui.open == Some(Menu::InputSourceModel(index)),
+                    choices,
+                    move |ui| toggle_menu(ui, Menu::InputSourceModel(index)),
+                    layer,
+                ),
+            )
+        })
+        .collect()
 }
 
 /// The speech model row's description: preparation progress or its error.

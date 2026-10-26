@@ -97,6 +97,16 @@ const MODEL_CHANGE: &str = "change the transcription model with `hex model use`"
 
 const KEYS: &[Key] = &[
     key(
+        "keyboard_model_switching.enabled",
+        Kind::Bool,
+        "Switch the model when the keyboard input source changes (macOS)",
+    ),
+    key(
+        "keyboard_model_switching.mappings",
+        Kind::Json,
+        "Input-source IDs mapped to installed model IDs; absent sources don't switch (macOS)",
+    ),
+    key(
         "commands_enabled",
         Kind::Bool,
         "Voice commands (loads the command model; keeps the microphone ready)",
@@ -840,6 +850,46 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), KEYS.len(), "a key is listed twice");
+    }
+
+    #[test]
+    fn keyboard_model_switching_settings_use_typed_source_to_model_mappings() {
+        let settings = apply(
+            &AppSettings::default(),
+            "keyboard_model_switching.enabled",
+            "on",
+            false,
+            &rules(),
+        )
+        .unwrap()
+        .settings;
+        assert!(settings.keyboard_model_switching.enabled);
+        let change = apply(
+            &settings,
+            "keyboard_model_switching.mappings",
+            r#"{"com.apple.keylayout.Russian":"parakeet_v3"}"#,
+            false,
+            &rules(),
+        )
+        .unwrap();
+        assert_eq!(
+            change
+                .settings
+                .keyboard_model_switching
+                .mappings
+                .get("com.apple.keylayout.Russian"),
+            Some(&crate::transcription_models::TranscriptionModelId::ParakeetV3)
+        );
+        assert!(
+            apply(
+                &settings,
+                "keyboard_model_switching.mappings",
+                r#"{"Russian":"unknown-model"}"#,
+                false,
+                &rules()
+            )
+            .is_err()
+        );
     }
 
     #[test]

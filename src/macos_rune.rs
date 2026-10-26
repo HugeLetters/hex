@@ -92,6 +92,8 @@ pub(crate) enum Request {
     SelectInstalledModel(TranscriptionModelId),
     /// `hex model use`: this exact selection, installed only, never a download.
     UseInstalledSelection(TranscriptionSelection),
+    /// Snapshot from the main-thread TIS observer, not a shortcut event.
+    InputSourceChanged(Option<String>),
     CancelModel,
     /// The window saved `settings.json`; adopt it.
     ReloadSettings,
@@ -152,6 +154,24 @@ impl RuntimeHandle {
     }
 
     pub(crate) fn send(&self, request: Request) -> Result<()> {
+        if matches!(
+            &request,
+            Request::ChooseModel { .. }
+                | Request::SelectInstalledModel(_)
+                | Request::UseInstalledSelection(_)
+                | Request::CancelModel
+                | Request::ReloadSettings
+        ) && let Some(mtm) = MainThreadMarker::new()
+        {
+            // Establish the source observed at this UI/control choice before
+            // admitting it. A delayed dirty notification then cannot undo a
+            // newer manual choice or apply an edit to a stale source.
+            self.requests
+                .send(Request::InputSourceChanged(
+                    crate::keyboard_input_sources::current(mtm),
+                ))
+                .map_err(|_| eyre!("Hex's runtime stopped"))?;
+        }
         self.requests
             .send(request)
             .map_err(|_| eyre!("Hex's runtime stopped"))
@@ -230,9 +250,9 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 pub fn run(shutdown: &'static AtomicBool, listener: ListenerConfig) -> Result<()> {
-    if MainThreadMarker::new().is_none() {
-        return Err(eyre!("desktop startup requires the main thread"));
-    }
+    let mtm =
+        MainThreadMarker::new().ok_or_else(|| eyre!("desktop startup requires the main thread"))?;
+    let initial_input_source = crate::keyboard_input_sources::current(mtm);
     shutdown.store(false, Ordering::Relaxed);
     crate::keyboard::initialize_layout()?;
     crate::updater::finish_on_launch();
@@ -344,6 +364,7 @@ pub fn run(shutdown: &'static AtomicBool, listener: ListenerConfig) -> Result<()
         .spawn(move || {
             run_runtime(
                 runtime_settings,
+                initial_input_source,
                 request_receiver,
                 &shared,
                 shutdown,
@@ -454,12 +475,18 @@ static DRAIN: crate::process_exit::Drain = crate::process_exit::Drain::new();
 
 fn run_runtime(
     settings: AppSettings,
+    initial_input_source: Option<String>,
     requests: Receiver<Request>,
     shared: &Shared,
     shutdown: &AtomicBool,
     recognition_start: Option<SyncSender<()>>,
 ) {
     let mut runtime = Runtime {
+        keyboard_switcher: crate::keyboard_model_switching::Switcher::new(
+            settings.keyboard_model_switching.clone(),
+            initial_input_source,
+        ),
+        automatic_preparation: false,
         settings,
         preparation: TranscriptionPreparation::default(),
         recognition_start,
@@ -499,6 +526,8 @@ fn run_runtime(
 struct Runtime {
     settings: AppSettings,
     preparation: TranscriptionPreparation,
+    keyboard_switcher: crate::keyboard_model_switching::Switcher,
+    automatic_preparation: bool,
     /// Starts the listener once setup is ready; `None` once started.
     recognition_start: Option<SyncSender<()>>,
 }
@@ -507,6 +536,7 @@ impl Runtime {
     fn handle(&mut self, request: Request) {
         match request {
             Request::ChooseModel { model, language } => {
+                self.manual_choice();
                 let definition = crate::transcription_models::definition(model);
                 let selection = TranscriptionSelection {
                     model,
@@ -522,11 +552,30 @@ impl Runtime {
             }
             Request::SelectInstalledModel(model) => {
                 self.reload_settings();
+                self.manual_choice();
                 self.preparation
                     .start(self.settings.transcription_for_model(model), true);
             }
-            Request::UseInstalledSelection(selection) => self.preparation.start(selection, true),
-            Request::CancelModel => self.preparation.cancel(),
+            Request::UseInstalledSelection(selection) => {
+                self.manual_choice();
+                if selection == self.settings.transcription {
+                    self.preparation.cancel();
+                } else {
+                    self.preparation.start(selection, true);
+                }
+            }
+            Request::InputSourceChanged(source) => {
+                if self
+                    .keyboard_switcher
+                    .source_changed(source, Instant::now())
+                {
+                    self.supersede_automatic();
+                }
+            }
+            Request::CancelModel => {
+                self.manual_choice();
+                self.preparation.cancel();
+            }
             Request::ReloadSettings => self.reload_settings(),
             Request::Desktop(_)
             | Request::CaptureShortcutFor(_)
@@ -537,14 +586,47 @@ impl Runtime {
 
     fn reload_settings(&mut self) {
         match AppSettings::load() {
-            Ok(settings) => self.settings = settings,
+            Ok(settings) => {
+                if self
+                    .keyboard_switcher
+                    .configure(settings.keyboard_model_switching.clone(), Instant::now())
+                {
+                    self.supersede_automatic();
+                }
+                self.settings = settings;
+            }
             Err(error) => tracing::warn!(%error, "could not reload settings"),
+        }
+    }
+
+    fn manual_choice(&mut self) {
+        self.keyboard_switcher.manual_choice();
+        self.automatic_preparation = false;
+    }
+
+    fn supersede_automatic(&mut self) {
+        // An unmapped source does not cancel a manual picker operation.
+        if self.automatic_preparation || self.keyboard_switcher.mapped_model().is_some() {
+            self.preparation.cancel();
+            self.automatic_preparation = false;
         }
     }
 
     /// Commits a prepared model and starts a listener that waited for setup.
     fn tick(&mut self) {
+        self.tick_at(Instant::now());
+    }
+
+    fn tick_at(&mut self, now: Instant) {
+        if let Some(model) = self.keyboard_switcher.take_due(now) {
+            let selection = self.settings.transcription_for_model(model);
+            if selection != self.settings.transcription {
+                self.preparation.start(selection, true);
+                self.automatic_preparation = true;
+            }
+        }
         if let Some(result) = self.preparation.poll() {
+            self.automatic_preparation = false;
             let result = result.and_then(|selection| {
                 crate::transcription_models::validate(&selection).map_err(|e| e.to_string())?;
                 let mut settings = AppSettings::load().map_err(|e| format!("{e:#}"))?;
@@ -627,6 +709,7 @@ struct PumpState {
     indicator: DictationIndicatorUi,
     timer: Retained<NSTimer>,
     _menu_target: Retained<MenuTarget>,
+    input_sources: crate::keyboard_input_sources::Watcher,
 }
 
 thread_local! {
@@ -678,6 +761,9 @@ fn start_main_thread(mut pump: Pump) {
     let block = RcBlock::new(|_: std::ptr::NonNull<NSTimer>| {
         PUMP.with(|slot| {
             if let Some(state) = slot.borrow_mut().as_mut() {
+                if let Some(source) = state.input_sources.poll() {
+                    let _ = state.pump.runtime.send(Request::InputSourceChanged(source));
+                }
                 state.pump.tick(&mut state.indicator);
             }
         });
@@ -698,6 +784,7 @@ fn start_main_thread(mut pump: Pump) {
             indicator,
             timer,
             _menu_target: target,
+            input_sources: crate::keyboard_input_sources::Watcher::new(mtm),
         });
     });
 }

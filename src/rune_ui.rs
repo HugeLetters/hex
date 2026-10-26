@@ -459,6 +459,7 @@ impl Pane {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Menu {
     Microphone,
+    InputSourceModel(usize),
     Language,
     HistoryRetention,
     /// The OpenCode model search for Voice Action or the selected mode.
@@ -1423,6 +1424,36 @@ const SCENES: &[Scene] = &[
     }),
     // macOS and Windows surfaces, from preview data (see `platform`).
     ("mac-settings", |ui| *ui = mac_fixture()),
+    ("mac-input-source-models", |ui| {
+        *ui = mac_fixture();
+        ui.settings.keyboard_model_switching.enabled = true;
+        ui.settings.keyboard_model_switching.mappings = [
+            (
+                "com.apple.keylayout.ABC".into(),
+                TranscriptionModelId::ParakeetUnifiedEnglish,
+            ),
+            (
+                "com.apple.keylayout.Russian".into(),
+                TranscriptionModelId::ParakeetV3,
+            ),
+        ]
+        .into();
+        ui.platform.input_sources = [
+            ("com.apple.keylayout.ABC", "ABC"),
+            ("com.apple.keylayout.Russian", "Russian"),
+            ("com.apple.keylayout.Spanish", "Spanish"),
+        ]
+        .into_iter()
+        .map(|(id, name)| crate::keyboard_model_switching::InputSource {
+            id: id.into(),
+            name: name.into(),
+        })
+        .collect();
+        ui.picker.installed = Some(vec![
+            TranscriptionModelId::ParakeetUnifiedEnglish,
+            TranscriptionModelId::ParakeetV3,
+        ]);
+    }),
     ("mac-settings-vocabulary", |ui| {
         *ui = mac_fixture();
         vocabulary::fixture(ui, true);
@@ -1749,3 +1780,6 @@ fn fixture(shortcuts: DesktopShortcuts) -> Ui {
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests;
+
+#[cfg(test)]
+mod keyboard_model_tests;
