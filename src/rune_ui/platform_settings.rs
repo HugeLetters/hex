@@ -778,6 +778,8 @@ pub(super) fn side_selector(ui: &Ui, p: Paint, target: ShortcutTarget) -> Option
         ShortcutTarget::Dictation => "dictation-side",
         ShortcutTarget::PasteLast => "paste-last-side",
         ShortcutTarget::VoiceAction => "voice-action-side",
+        #[cfg(hex_capture)]
+        ShortcutTarget::Capture => "capture-side",
     };
     let labels = [tr("Left"), tr("Either"), tr("Right")];
     let selected = SIDES.iter().position(|s| *s == side).unwrap_or(1);

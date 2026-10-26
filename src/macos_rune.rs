@@ -57,6 +57,9 @@ use crate::transcription_preparation::TranscriptionPreparation;
 
 mod control;
 
+#[cfg(test)]
+mod tests;
+
 /// How often the runtime refreshes while nothing is asked.
 const RUNTIME_TICK: Duration = Duration::from_millis(250);
 /// The main-loop timer: the HUD follows the pointer and channels drain.
@@ -106,6 +109,8 @@ pub(crate) enum ShortcutTarget {
     Dictation,
     PasteLast,
     VoiceAction,
+    #[cfg(hex_capture)]
+    Capture,
 }
 
 /// What the runtime last published for the window and the menu bar.

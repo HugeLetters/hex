@@ -804,7 +804,8 @@ fn the_sidebar_moves_with_arrows_and_command_numbers() {
         ..Mods::default()
     };
     let shown: Vec<_> = Pane::ALL
-        .into_iter()
+        .iter()
+        .copied()
         .filter(|pane| pane.shown(&rt.state))
         .collect();
     key(&mut rt, Key::Command('3'), command);

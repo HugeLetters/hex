@@ -299,6 +299,8 @@ pub(super) fn conflicts(
         ShortcutTarget::Dictation => HotkeySlot::Dictation,
         ShortcutTarget::VoiceAction => HotkeySlot::VoiceAction,
         ShortcutTarget::PasteLast => HotkeySlot::PasteLast,
+        #[cfg(hex_capture)]
+        ShortcutTarget::Capture => HotkeySlot::Capture,
     };
     settings.hotkey_in_use(slot, binding)
 }
@@ -324,6 +326,8 @@ pub(super) fn binding(settings: &AppSettings, target: ShortcutTarget) -> Option<
         ShortcutTarget::Dictation => Some(&settings.dictation_hotkey),
         ShortcutTarget::PasteLast => settings.paste_last_hotkey.as_ref(),
         ShortcutTarget::VoiceAction => Some(&settings.edit_hotkey),
+        #[cfg(hex_capture)]
+        ShortcutTarget::Capture => Some(&settings.capture.hotkey),
     }
 }
 
@@ -336,6 +340,8 @@ pub(super) fn set_binding(
         ShortcutTarget::Dictation => settings.dictation_hotkey = binding,
         ShortcutTarget::PasteLast => settings.paste_last_hotkey = Some(binding),
         ShortcutTarget::VoiceAction => settings.edit_hotkey = binding,
+        #[cfg(hex_capture)]
+        ShortcutTarget::Capture => settings.capture.hotkey = binding,
     }
 }
 
@@ -520,6 +526,8 @@ fn portal_grant(ui: &Ui, target: ShortcutTarget) -> Option<&DesktopGrantedShortc
         ShortcutTarget::Dictation => "Dictation",
         ShortcutTarget::PasteLast => "Paste last dictation",
         ShortcutTarget::VoiceAction => "Voice Action",
+        #[cfg(hex_capture)]
+        ShortcutTarget::Capture => "Capture",
     };
     granted.iter().find(|shortcut| shortcut.name == name)
 }
@@ -544,6 +552,8 @@ fn shortcut_row(ui: &Ui, p: Paint, target: ShortcutTarget) -> El {
         ShortcutTarget::Dictation => ("dictation-shortcut", tr("Shortcut")),
         ShortcutTarget::PasteLast => ("paste-last", tr("Paste last dictation")),
         ShortcutTarget::VoiceAction => ("voice-action-shortcut", tr("Voice Action")),
+        #[cfg(hex_capture)]
+        ShortcutTarget::Capture => ("capture-shortcut", tr("Shortcut")),
     };
     described_row(
         p,
@@ -568,6 +578,8 @@ pub(super) fn shortcut_control(ui: &Ui, p: Paint, target: ShortcutTarget) -> El 
         ShortcutTarget::Dictation => "dictation-shortcut-control",
         ShortcutTarget::PasteLast => "paste-last-control",
         ShortcutTarget::VoiceAction => "voice-action-shortcut-control",
+        #[cfg(hex_capture)]
+        ShortcutTarget::Capture => "capture-shortcut-control",
     };
     let picker = super::platform_settings::side_selector(ui, p, target);
     // The picker hangs off the keys' left edge in the room its margin
@@ -1036,6 +1048,8 @@ pub(super) fn hotkey_control(ui: &Ui, p: Paint, target: ShortcutTarget) -> El {
         ShortcutTarget::Dictation => "dictation-hotkey",
         ShortcutTarget::PasteLast => "paste-last-hotkey",
         ShortcutTarget::VoiceAction => "voice-action-hotkey",
+        #[cfg(hex_capture)]
+        ShortcutTarget::Capture => "capture-hotkey",
     };
     let face = match ui.capture {
         Capture::Listening {

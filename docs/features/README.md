@@ -30,8 +30,9 @@ have detailed maps.
 Agents can [read retained transcripts](transcript-cli.md) and
 [control the running app](control-cli.md) with the release CLI.
 [Experiments](experiments.md) turn unfinished features on per person with a flag;
-the [vocabulary](vocabulary.md) is one, and debug builds add
-[Captures](capture.md), Scrawl's capture engine hosted in Hex.
+the [vocabulary](vocabulary.md) is one, and macOS builds with the `capture`
+build option add [Captures](capture.md): Scrawl's capture engine hosted in Hex,
+with its shortcut, input, and Settings › Experiments › Scrawl pane.
 The other capabilities stay here until they need their own verification recipe.
 
 ## Get Ready
@@ -120,8 +121,13 @@ Launch Hex, setup incomplete              // setup.tour; full-window, own column
 │   └── Change or delete the model later in Settings      // setup.delete-model
 ├── macOS: opens centred at one fixed size, so tiling managers float it
 ├── Quit part-way -> next launch resumes at the saved step  // setup.resume
-├── Welcome -> Get started                // looping keycap + listening rings
+├── Welcome -> Get started                // setup.welcome-hero
+│   ├── The Hex glyph backlit by a cool corona, drawn live on the GPU
+│   │   (`rune_ui/hero.rs`); core, middle ring, outer ring light in turn,
+│   │   then the lamp breathes. Light theme: ink rings over a pale blue glow
+│   └── Reduce Motion -> the settled frame, lamp at rest
 ├── Setup: one screen, every permission   // setup.checklist; skipped when granted
+│   ├── Each row leads with its glyph: mic, keyboard, text cursor, sparkle (model)
 │   ├── Every row -> Allow; asked -> pulse + Allow; granted -> Allowed  // setup.permission-control
 │   │   └── Grant: the pill narrows into the green label, the dot shrinks into
 │   │       the check as it draws on (0.3 s, no bounce; Reduce Motion: no travel)
@@ -220,7 +226,11 @@ download, practice hints, one-relaunch guard) drawn by
 [rune_ui/onboarding.rs](../../src/rune_ui/onboarding.rs); `permission_control`
 in [rune_ui/lists.rs](../../src/rune_ui/lists.rs) is the one Allow / dot /
 Allowed control Settings and the tour share (`a_grant_gathers_then_releases_into_allowed`,
-`reduce_motion_swaps_allow_for_allowed_at_once`; scene `meetings-allow`). The guide
+`reduce_motion_swaps_allow_for_allowed_at_once`; scene `meetings-allow`). The
+welcome hero is a compositor pass after the UI, so goldens show its stage
+empty; `hex app -- --scene onboarding-hero` (`-still` for Reduce Motion) runs
+it live, and `--video` records it. Its springs passed motion-lint as level
+channels; native visual review is still by eye. The guide
 beside System Settings is [permission_guide.m](../../native/permission_guide.m).
 Unit tests (`onboarding::tests`) cover step order, the download starting on the
 welcome screen and retrying from any step, permissions-only setup with the
@@ -326,9 +336,12 @@ Checks cover persisted opt-in/mappings, startup preservation, debounce/pass-thro
 sources, manual cancellation, active-mapping edits, installed-only preparation,
 and UI platform visibility/mapping edits. Runtime regressions also cover manual
 preparation surviving a no-op CLI choice or pass-through source, and a due mapping
-superseding manual work even when its model is already selected.
-`mac-input-source-models` renders the
-enabled mapping table in light and dark. Native read-only probing verified enabled
+superseding manual work even when its model is already selected; these live beside
+the runtime in [macos_rune/tests.rs](../../src/macos_rune/tests.rs).
+`mac-input-source-models` renders the enabled mapping table and is registered for
+light/dark golden comparison. Linux reference-image generation and validation,
+including the affected General-pane images, remain pending; macOS renders must
+not replace the Linux references. Native read-only probing verified enabled
 source enumeration, current-source lookup, and observer initialization/teardown.
 The author reported a successful smoke test of the installed macOS prototype.
 A controlled matrix of source-change delivery, physical menu/shortcut changes,
