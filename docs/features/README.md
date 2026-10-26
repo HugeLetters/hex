@@ -280,6 +280,14 @@ and menu choice/tag projection. These do not establish a physical menu click or
 an installed-app switch. Remembering a language does not change the language
 conditioning limitations described above.
 
+**Observed September 4, 2026 (2.1.16), existing model picker:** all 455 Rust tests
+passed in debug and release, with ten opt-in tests skipped per profile. All twelve
+keyboard-layout child scenarios passed per profile; formatting, strict
+all-target/all-feature Clippy in both profiles, and the release build passed.
+The Cohere fixture inference check was run separately; see
+[dictation model windows](dictation.md#ongoing-jobs-and-output). Native menu
+interaction, installed-app switching, and Linux runtime behavior were not exercised.
+
 ### Switch models with keyboard language
 
 ```ts
@@ -303,8 +311,10 @@ an unavailable mapped model is labeled Not installed and can be cleared. Only
 installed GGUF models are offered, with downloads kept in the existing picker.
 
 The main-thread TIS distributed-notification observer works without a Settings
-window. A new mapped source supersedes older preparation; an unmapped source
-cancels only automatic work. Manual choices cancel the debounce too. This reuses
+window. Source changes cancel obsolete automatic work, but preserve manual
+preparation until a mapped choice is due after the debounce. An unmapped source
+cancels only automatic work. Manual choices cancel the debounce too; an unchanged
+CLI choice leaves other manual preparation alone, even with the feature off. This reuses
 the current shared model selection, recording/stream fallback, and meeting-engine
 behavior; it adds no recording-time routing, model cache, or notifications.
 
@@ -314,20 +324,18 @@ Sources: [observer](../../src/keyboard_input_sources.rs),
 [settings UI](../../src/rune_ui/settings.rs).
 Checks cover persisted opt-in/mappings, startup preservation, debounce/pass-through
 sources, manual cancellation, active-mapping edits, installed-only preparation,
-and UI platform visibility/mapping edits. `mac-input-source-models` renders the
+and UI platform visibility/mapping edits. Runtime regressions also cover manual
+preparation surviving a no-op CLI choice or pass-through source, and a due mapping
+superseding manual work even when its model is already selected.
+`mac-input-source-models` renders the
 enabled mapping table in light and dark. Native read-only probing verified enabled
 source enumeration, current-source lookup, and observer initialization/teardown.
-Real source-change notification delivery, physical menu/shortcut changes,
-automatic per-document changes, model inference, and Linux/Windows execution have
-not been smoke-tested for this feature. A fixture render is not native end-to-end proof.
+The author reported a successful smoke test of the installed macOS prototype.
+A controlled matrix of source-change delivery, physical menu/shortcut changes,
+automatic per-document changes, model inference, and Linux/Windows execution has
+not been run for this feature. A fixture render is not native end-to-end proof.
 
-**Observed September 4, 2026 (2.1.16):** all 455 Rust tests
-passed in debug and release, with ten opt-in tests skipped per profile. All twelve
-keyboard-layout child scenarios passed per profile; formatting, strict
-all-target/all-feature Clippy in both profiles, and the release build passed.
-The Cohere fixture inference check was run separately; see
-[dictation model windows](dictation.md#ongoing-jobs-and-output). Native menu
-interaction, installed-app switching, and Linux runtime behavior were not exercised.
+### Delete downloaded models
 
 ```ts
 Settings picker > Downloaded model card   // setup.delete-model; macOS

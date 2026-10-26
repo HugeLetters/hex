@@ -558,9 +558,7 @@ impl Runtime {
             }
             Request::UseInstalledSelection(selection) => {
                 self.manual_choice();
-                if selection == self.settings.transcription {
-                    self.preparation.cancel();
-                } else {
+                if selection != self.settings.transcription {
                     self.preparation.start(selection, true);
                 }
             }
@@ -601,12 +599,16 @@ impl Runtime {
 
     fn manual_choice(&mut self) {
         self.keyboard_switcher.manual_choice();
-        self.automatic_preparation = false;
+        if self.automatic_preparation {
+            self.preparation.cancel();
+            self.automatic_preparation = false;
+        }
     }
 
     fn supersede_automatic(&mut self) {
-        // An unmapped source does not cancel a manual picker operation.
-        if self.automatic_preparation || self.keyboard_switcher.mapped_model().is_some() {
+        // A source being cycled through must not cancel a manual operation.
+        // Manual work is superseded only when the debounced choice is due.
+        if self.automatic_preparation {
             self.preparation.cancel();
             self.automatic_preparation = false;
         }
@@ -623,6 +625,11 @@ impl Runtime {
             if selection != self.settings.transcription {
                 self.preparation.start(selection, true);
                 self.automatic_preparation = true;
+            } else {
+                // The debounced choice keeps the current model, but must
+                // still prevent an older manual preparation replacing it.
+                self.preparation.cancel();
+                self.automatic_preparation = false;
             }
         }
         if let Some(result) = self.preparation.poll() {

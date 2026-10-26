@@ -922,4 +922,229 @@ mod tests {
             None
         );
     }
+
+    #[test]
+    fn choosing_the_current_model_keeps_manual_preparation_when_switching_is_disabled() {
+        let (started, starts) = mpsc::channel();
+        let (release, releases) = mpsc::channel();
+        let releases = std::sync::Mutex::new(releases);
+        let preparation = TranscriptionPreparation::with_prepare(Arc::new(
+            move |selection, installed_only, _, _| {
+                started.send((selection.model, installed_only)).unwrap();
+                releases
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(3))
+                    .map_err(|error| error.to_string())?;
+                Ok(())
+            },
+        ));
+        let settings = crate::app_settings::AppSettings::default();
+        assert!(!settings.keyboard_model_switching.enabled);
+        let mut runtime = super::super::Runtime {
+            keyboard_switcher: crate::keyboard_model_switching::Switcher::new(
+                settings.keyboard_model_switching.clone(),
+                Some("ABC".into()),
+            ),
+            automatic_preparation: false,
+            settings,
+            preparation,
+            recognition_start: None,
+        };
+        runtime.handle(super::super::Request::ChooseModel {
+            model: TranscriptionModelId::WhisperLargeV3Turbo,
+            language: "en".into(),
+        });
+        assert_eq!(
+            starts.recv_timeout(Duration::from_secs(3)).unwrap(),
+            (TranscriptionModelId::WhisperLargeV3Turbo, false)
+        );
+        runtime.handle(super::use_request(runtime.settings.transcription.clone()));
+        assert_eq!(
+            runtime.preparation.status().model,
+            Some(TranscriptionModelId::WhisperLargeV3Turbo)
+        );
+        release.send(()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            if let Some(result) = runtime.preparation.poll() {
+                assert_eq!(
+                    result.unwrap().model,
+                    TranscriptionModelId::WhisperLargeV3Turbo
+                );
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "manual preparation was cancelled"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn cycling_through_a_mapped_source_keeps_manual_preparation_until_a_switch_is_due() {
+        let (started, starts) = mpsc::channel();
+        let (release, releases) = mpsc::channel();
+        let releases = std::sync::Mutex::new(releases);
+        let preparation =
+            TranscriptionPreparation::with_prepare(Arc::new(move |selection, _, _, _| {
+                started.send(selection.model).unwrap();
+                releases
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(3))
+                    .map_err(|error| error.to_string())?;
+                Ok(())
+            }));
+        let settings = crate::app_settings::AppSettings {
+            keyboard_model_switching: crate::app_settings::KeyboardModelSwitching {
+                enabled: true,
+                mappings: [("Russian".into(), TranscriptionModelId::ParakeetV3)].into(),
+            },
+            ..Default::default()
+        };
+        let mut runtime = super::super::Runtime {
+            keyboard_switcher: crate::keyboard_model_switching::Switcher::new(
+                settings.keyboard_model_switching.clone(),
+                Some("ABC".into()),
+            ),
+            automatic_preparation: false,
+            settings,
+            preparation,
+            recognition_start: None,
+        };
+        runtime.handle(super::super::Request::ChooseModel {
+            model: TranscriptionModelId::WhisperLargeV3Turbo,
+            language: "en".into(),
+        });
+        assert_eq!(
+            starts.recv_timeout(Duration::from_secs(3)).unwrap(),
+            TranscriptionModelId::WhisperLargeV3Turbo
+        );
+        runtime.handle(super::super::Request::InputSourceChanged(Some(
+            "Russian".into(),
+        )));
+        assert_eq!(
+            runtime.preparation.status().model,
+            Some(TranscriptionModelId::WhisperLargeV3Turbo)
+        );
+        runtime.handle(super::super::Request::InputSourceChanged(Some(
+            "ABC".into(),
+        )));
+        runtime.tick_at(std::time::Instant::now() + Duration::from_secs(1));
+        assert_eq!(
+            runtime.preparation.status().model,
+            Some(TranscriptionModelId::WhisperLargeV3Turbo)
+        );
+        release.send(()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            if let Some(result) = runtime.preparation.poll() {
+                assert_eq!(
+                    result.unwrap().model,
+                    TranscriptionModelId::WhisperLargeV3Turbo
+                );
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "manual preparation was cancelled by a pass-through source"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            starts.try_recv().is_err(),
+            "pass-through source must not prepare a model"
+        );
+    }
+
+    #[test]
+    fn a_due_source_choice_supersedes_manual_preparation_even_for_the_current_model() {
+        for mapped in [
+            TranscriptionModelId::ParakeetV3,
+            TranscriptionModelId::ParakeetUnifiedEnglish,
+        ] {
+            let (started, starts) = mpsc::channel();
+            let (release, releases) = mpsc::channel();
+            let releases = std::sync::Mutex::new(releases);
+            let (finished, finishes) = mpsc::channel();
+            let preparation = TranscriptionPreparation::with_prepare(Arc::new(
+                move |selection, installed_only, cancelled, _| {
+                    started.send((selection.model, installed_only)).unwrap();
+                    releases
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(3))
+                        .map_err(|error| error.to_string())?;
+                    let _ = finished.send(cancelled.load(std::sync::atomic::Ordering::Acquire));
+                    Ok(())
+                },
+            ));
+            let settings = crate::app_settings::AppSettings {
+                transcription: TranscriptionSelection {
+                    model: TranscriptionModelId::ParakeetUnifiedEnglish,
+                    language: "en".into(),
+                    recognition_hints: String::new(),
+                },
+                keyboard_model_switching: crate::app_settings::KeyboardModelSwitching {
+                    enabled: true,
+                    mappings: [("Russian".into(), mapped)].into(),
+                },
+                ..Default::default()
+            };
+            let mut runtime = super::super::Runtime {
+                keyboard_switcher: crate::keyboard_model_switching::Switcher::new(
+                    settings.keyboard_model_switching.clone(),
+                    Some("ABC".into()),
+                ),
+                automatic_preparation: false,
+                settings,
+                preparation,
+                recognition_start: None,
+            };
+            runtime.handle(super::super::Request::ChooseModel {
+                model: TranscriptionModelId::WhisperLargeV3Turbo,
+                language: "en".into(),
+            });
+            assert_eq!(
+                starts.recv_timeout(Duration::from_secs(3)).unwrap(),
+                (TranscriptionModelId::WhisperLargeV3Turbo, false)
+            );
+            runtime.handle(super::super::Request::InputSourceChanged(Some(
+                "Russian".into(),
+            )));
+            assert_eq!(
+                runtime.preparation.status().model,
+                Some(TranscriptionModelId::WhisperLargeV3Turbo)
+            );
+            runtime.tick_at(std::time::Instant::now() + Duration::from_secs(1));
+            let already_current = mapped == runtime.settings.transcription.model;
+            assert_eq!(
+                runtime.preparation.status().model,
+                (!already_current).then_some(mapped)
+            );
+            release.send(()).unwrap();
+            assert!(
+                finishes.recv_timeout(Duration::from_secs(3)).unwrap(),
+                "obsolete manual preparation wasn't cancelled"
+            );
+            if !already_current {
+                let deadline = std::time::Instant::now() + Duration::from_secs(3);
+                loop {
+                    assert!(
+                        runtime.preparation.poll().is_none(),
+                        "obsolete manual choice escaped cancellation"
+                    );
+                    if let Ok(choice) = starts.try_recv() {
+                        assert_eq!(choice, (mapped, true));
+                        break;
+                    }
+                    assert!(std::time::Instant::now() < deadline);
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                release.send(()).unwrap();
+            }
+        }
+    }
 }
