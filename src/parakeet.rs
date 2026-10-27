@@ -1229,7 +1229,7 @@ impl Parakeet {
             model_path,
             &ModelOptions {
                 backend: Backend::Metal,
-                device: None,
+                ..Default::default()
             },
         )
         .wrap_err_with(|| {
@@ -1256,7 +1256,7 @@ impl Parakeet {
             variant,
             "loaded transcription model"
         );
-        let capabilities = model.capabilities();
+        let capabilities = model.capabilities()?;
         let mut language = None;
         let mut family = None;
         if let (Some(selection), Some(definition)) = (selection, definition) {

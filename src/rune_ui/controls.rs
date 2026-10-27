@@ -288,12 +288,21 @@ pub(super) fn toggle_row<'a>(
     on: bool,
     flip: impl Fn(&mut Ui) + 'static,
 ) -> El {
-    setting_row(p, key, title, description.into(), row_switch(p, on))
-        .role("toggle")
-        .focusable(true)
-        .hover(p.k.c.hover)
-        .press(p.k.c.pressed)
-        .on_press(flip)
+    pressable_row(setting_row(
+        p,
+        key,
+        title,
+        description.into(),
+        row_switch(p, on),
+    ))
+    .on_press(flip)
+}
+
+/// A settings row that toggles when pressed anywhere. Only its switch
+/// reacts to the pointer; the row itself never paints a hover or press
+/// fill.
+pub(super) fn pressable_row(row: El) -> El {
+    row.role("toggle").focusable(true)
 }
 
 /// A few exclusive choices: equal segments sized for the longest label.
@@ -519,11 +528,40 @@ impl KeySize {
         }
     }
 
-    fn legend(self) -> TextStyle {
+    pub(super) fn legend(self) -> TextStyle {
         match self {
             Self::Small => TextStyle::new(11.0, 400.0).lh(14.0),
             Self::Large => TextStyle::new(13.0, 400.0).lh(16.0),
         }
+    }
+
+    /// Beside the legend on the face.
+    const fn face_padding(self) -> f32 {
+        match self {
+            Self::Small => 6.0,
+            Self::Large => 8.0,
+        }
+    }
+
+    /// A key's width, rims included, for a legend this many points wide.
+    fn key_width(self, legend: f32) -> f32 {
+        (legend + 2.0 * self.face_padding()).max(self.min_width() - 2.0 * KEY_RIM) + 2.0 * KEY_RIM
+    }
+
+    /// A tray's width around keys with legends this many points wide, as
+    /// [`key_tray`] lays them out.
+    #[cfg_attr(
+        not(hex_capture),
+        expect(
+            dead_code,
+            reason = "only the capture capsule sizes a tray before layout"
+        )
+    )]
+    pub(super) fn tray_width(self, legends: impl IntoIterator<Item = f32>) -> f32 {
+        let (sum, count) = legends.into_iter().fold((0.0, 0), |(sum, count), legend| {
+            (sum + self.key_width(legend), count + 1)
+        });
+        sum + KEY_GAP * (count.max(1) - 1) as f32 + 2.0 * TRAY_PADDING
     }
 }
 
@@ -681,10 +719,7 @@ pub(super) fn keycap(p: Paint, index: usize, label: &str, size: KeySize, down: b
                 .key("face")
                 .min_w(size.min_width() - 2.0 * KEY_RIM)
                 .h(face_height)
-                .px(match size {
-                    KeySize::Small => 6.0,
-                    KeySize::Large => 8.0,
-                })
+                .px(size.face_padding())
                 .center()
                 .radius(size.face_radius())
                 .continuous_corners()

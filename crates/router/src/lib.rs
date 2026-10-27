@@ -178,7 +178,7 @@ impl Router {
     /// that can't be reached, or `deadline`.
     pub fn undo(&self, delivery_id: &str, deadline: Duration) -> Result<UndoReport> {
         let id = delivery_id.to_owned();
-        self.within("undo", deadline, move || routing::undo::undo(&id))
+        self.within("undo", deadline, move || routing::undo::undo(&id, deadline))
     }
 
     /// `router correct`: logs that a decision was corrected, from its target to `to` (a

@@ -412,6 +412,23 @@ fn translate(layout: *const u8, key_code: u16, modifier_state: u32) -> Option<St
 mod tests {
     use super::*;
 
+    /// Hex's taps let its own keystrokes through by this mark, so a posted
+    /// shortcut (the capture hand-off's ⌘V included) never reads as the
+    /// user's chord.
+    #[test]
+    fn posted_keystrokes_carry_hexs_marker() {
+        #[link(name = "ApplicationServices", kind = "framework")]
+        unsafe extern "C" {
+            fn CGEventGetIntegerValueField(event: EventRef, field: u32) -> i64;
+        }
+        for event in shortcut_event_specs(9, &[(COMMAND_FLAG, COMMAND_KEY_CODE)], 1) {
+            let event = KeyboardEvent::new(event).unwrap();
+            // SAFETY: the event is valid until `event` drops.
+            let mark = unsafe { CGEventGetIntegerValueField(event.0, EVENT_SOURCE_USER_DATA) };
+            assert_eq!(mark, SYNTHETIC_EVENT_MARKER);
+        }
+    }
+
     #[test]
     fn non_latin_snapshot_gets_shortcut_letters_without_replacing_active_keys() {
         let mut codes = collect_key_codes([('ж', 41), ('v', 12)]);

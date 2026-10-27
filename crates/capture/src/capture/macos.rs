@@ -870,15 +870,12 @@ pub fn discover_target_at(window_query: Option<&str>, point: Option<[f64; 2]>) -
     let frontmost = frontmost_app_info();
     let screens = crate::screens::displays();
     if let Ok(content) = SCShareableContent::get() {
-        let our_pid = std::process::id() as i32;
         if let Some(query) = window_query {
             let q = query.to_lowercase();
+            // Normal windows only: the host's own count (Hex's Settings), its overlays don't.
             if let Some(win) = content.windows().into_iter().find(|w| {
                 w.is_on_screen()
                     && w.window_layer() == 0
-                    && w.owning_application()
-                        .as_ref()
-                        .is_none_or(|a| a.process_id() != our_pid)
                     && (w
                         .title()
                         .as_deref()
@@ -981,12 +978,13 @@ fn display_of(screens: &[crate::screens::Screen], rect: [f64; 4]) -> (u32, f64) 
     )
 }
 
-/// Lists all on-screen normal (`window_layer == 0`) windows in front-to-back order for the Window picker.
+/// Lists all on-screen normal (`window_layer == 0`) windows in front-to-back order for the
+/// Window picker, the host's own among them (Hex's Settings); its overlays and panels sit above
+/// the normal level.
 pub fn list_selectable_windows() -> Vec<TargetInfo> {
     let Ok(content) = SCShareableContent::get() else {
         return Vec::new();
     };
-    let our_pid = std::process::id() as i32;
     let screens = crate::screens::displays();
 
     content
@@ -998,9 +996,7 @@ pub fn list_selectable_windows() -> Vec<TargetInfo> {
                 && w.window_layer() == 0
                 && f.size.width >= 80.0
                 && f.size.height >= 80.0
-                && w.owning_application()
-                    .as_ref()
-                    .is_some_and(|a| a.process_id() != our_pid)
+                && w.owning_application().is_some()
         })
         .map(|w| {
             let f = w.frame();
@@ -1043,15 +1039,19 @@ pub fn ensure_external_app_active() {
     let front_pid = workspace
         .frontmostApplication()
         .map_or(0, |a| a.processIdentifier());
-    if front_pid != 0 && front_pid != our_pid {
+    let Some(target_pid) = paste_app(
+        front_pid,
+        our_pid,
+        LAST_EXTERNAL_APP_PID.load(Ordering::Acquire),
+    ) else {
+        return;
+    };
+    if target_pid == front_pid {
         LAST_EXTERNAL_APP_PID.store(front_pid, Ordering::Release);
         return;
     }
-    let target_pid = LAST_EXTERNAL_APP_PID.load(Ordering::Acquire);
-    if target_pid > 0
-        && target_pid != our_pid
-        && let Some(target_app) =
-            NSRunningApplication::runningApplicationWithProcessIdentifier(target_pid)
+    if let Some(target_app) =
+        NSRunningApplication::runningApplicationWithProcessIdentifier(target_pid)
     {
         #[allow(deprecated)]
         let _ = target_app
@@ -1070,6 +1070,15 @@ pub fn ensure_external_app_active() {
     }
 }
 
+/// The app a paste goes to: the active app unless it's the host, else the last external one.
+/// The host's own windows (Hex's Settings) count as in front for routing, never for a paste.
+fn paste_app(front_pid: i32, our_pid: i32, last_external: i32) -> Option<i32> {
+    if front_pid > 0 && front_pid != our_pid {
+        return Some(front_pid);
+    }
+    (last_external > 0 && last_external != our_pid).then_some(last_external)
+}
+
 /// The app whose non-activating panel has the keys over the active app `front` (a launcher
 /// like Invoke), from Accessibility and the window list.
 fn key_panel_pid(front: i32) -> Option<i32> {
@@ -1078,15 +1087,28 @@ fn key_panel_pid(front: i32) -> Option<i32> {
     crate::windows::panel_front(&raw, Some(front), Some(focused), std::process::id() as i32)
 }
 
+/// Whether `pid`, the active app, is what's in front: any other app, or this one while its
+/// normal window (Hex's Settings) is the topmost one. Active with only its overlays and panels
+/// (a click on the capsule), the host isn't what a capture is about. For what a capture is
+/// about only: output handed to an app goes elsewhere ([`paste_app`]).
+fn counts_as_front(pid: i32, our_pid: i32) -> bool {
+    pid > 0
+        && (pid != our_pid
+            || crate::windows::own_window_in_front(
+                &objc2::rc::autoreleasepool(|_| crate::windows::raw_windows()),
+                our_pid,
+            ))
+}
+
 /// The frontmost app's pid (an app whose floating panel has the keys counts), or the last
-/// external one while Scrawl itself is in front.
+/// external one while the host is in front without a window of its own.
 pub fn frontmost_external_pid() -> Option<i32> {
     use objc2_app_kit::NSWorkspace;
     let our_pid = std::process::id() as i32;
     let pid = NSWorkspace::sharedWorkspace()
         .frontmostApplication()
         .map_or(0, |a| a.processIdentifier());
-    if pid > 0 && pid != our_pid {
+    if counts_as_front(pid, our_pid) {
         return Some(key_panel_pid(pid).unwrap_or(pid));
     }
     let fallback = LAST_EXTERNAL_APP_PID.load(Ordering::Acquire);
@@ -1099,8 +1121,10 @@ pub fn frontmost_app_info() -> Option<(i32, String, Option<String>)> {
     let workspace = NSWorkspace::sharedWorkspace();
     if let Some(app) = workspace.frontmostApplication() {
         let pid = app.processIdentifier();
-        if pid != our_pid {
-            LAST_EXTERNAL_APP_PID.store(pid, Ordering::Release);
+        if counts_as_front(pid, our_pid) {
+            if pid != our_pid {
+                LAST_EXTERNAL_APP_PID.store(pid, Ordering::Release);
+            }
             let app = key_panel_pid(pid)
                 .and_then(NSRunningApplication::runningApplicationWithProcessIdentifier)
                 .unwrap_or(app);
@@ -1903,6 +1927,16 @@ fn shortcut_key_name(keycode: u16) -> Option<String> {
 mod tests {
     use super::*;
     use crate::model::{InteractionEvent, TargetFrame};
+
+    /// A paste never goes to the host, even with its Settings window in front: it goes to the
+    /// last external app instead.
+    #[test]
+    fn a_paste_goes_to_an_external_app_never_the_host() {
+        assert_eq!(paste_app(42, 9, 7), Some(42), "the app in front");
+        assert_eq!(paste_app(9, 9, 7), Some(7), "the host in front");
+        assert_eq!(paste_app(9, 9, 9), None);
+        assert_eq!(paste_app(0, 9, 0), None);
+    }
 
     /// The mouse monitor's AppKit calls pass objc2's encoding checks (which debug builds, the
     /// installed app included, run on every message), and a monitored click is recorded.

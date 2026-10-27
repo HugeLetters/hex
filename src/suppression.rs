@@ -88,6 +88,13 @@ unsafe extern "C" {
     fn CGEventGetIntegerValueField(event: EventRef, field: u32) -> i64;
     #[cfg(hex_capture)]
     fn CGEventGetLocation(event: EventRef) -> CgPoint;
+    #[cfg(hex_capture)]
+    fn CGEventKeyboardGetUnicodeString(
+        event: EventRef,
+        max_length: usize,
+        actual_length: *mut usize,
+        buffer: *mut u16,
+    );
 }
 
 #[cfg(hex_capture)]
@@ -655,6 +662,14 @@ unsafe extern "C" fn event_callback(
         return event;
     }
     #[cfg(hex_capture)]
+    let list_swallows = match list_tap(event_type, event) {
+        ListSwallow::No => false,
+        ListSwallow::Only => return ptr::null_mut(),
+        ListSwallow::AfterListener => true,
+    };
+    #[cfg(not(hex_capture))]
+    let list_swallows = false;
+    #[cfg(hex_capture)]
     let capture_key = if crate::capture_host::wants_input() {
         match report_capture_input(event_type, event) {
             CaptureTap::Only => return event,
@@ -664,6 +679,16 @@ unsafe extern "C" fn event_callback(
     } else {
         None
     };
+    // A press anywhere while the list is open may close it; the click still
+    // goes to the app and to the listener as chord evidence.
+    #[cfg(hex_capture)]
+    if matches!(
+        event_type,
+        EVENT_LEFT_MOUSE_DOWN | EVENT_RIGHT_MOUSE_DOWN | EVENT_OTHER_MOUSE_DOWN
+    ) && crate::capture_host::list_open()
+    {
+        crate::capture_host::capsule_key(crate::capture_host::CapsuleKey::Press);
+    }
     let input = match event_type {
         EVENT_FLAGS_CHANGED => {
             // SAFETY: CoreGraphics supplied a valid event to this callback.
@@ -710,10 +735,118 @@ unsafe extern "C" fn event_callback(
     #[cfg(hex_capture)]
     if let Some(key) = capture_key
         && !suppress
+        && !list_swallows
     {
         crate::capture_host::report_input(capture_at, key);
     }
-    if suppress { ptr::null_mut() } else { event }
+    if suppress || list_swallows {
+        ptr::null_mut()
+    } else {
+        event
+    }
+}
+
+/// What the session tap does with a key while the capture capsule's list
+/// is open (`capture_host::list_open`).
+#[cfg(hex_capture)]
+enum ListSwallow {
+    /// Not the list's.
+    No,
+    /// The list's Escape: kept from the app and from the listener, so it
+    /// cancels nothing else.
+    Only,
+    /// The list's, or the release of a key it took: kept from the app, but
+    /// the listener still sees it, so a held ⌥ typing a character stays a
+    /// chord rather than a dictation.
+    AfterListener,
+}
+
+/// Whether the capsule's list or suggestions may take a key press: only
+/// while captures are on, something is open, and no shortcut is being
+/// recorded. With captures turned off, a capsule left open takes nothing.
+#[cfg(hex_capture)]
+fn list_takes_keys(capture_on: bool, open: bool, recording_shortcut: bool) -> bool {
+    capture_on && open && !recording_shortcut
+}
+
+/// Hands the open list its keys (`capture_host::list_key`) on the tap's
+/// thread; their releases stay with it even after it closes.
+#[cfg(hex_capture)]
+fn list_tap(event_type: u32, event: EventRef) -> ListSwallow {
+    use crate::capture_host::{CapsuleKey, ListTap, capsule_key, list_key, list_open, suggesting};
+    static TAKEN: Mutex<u128> = Mutex::new(0);
+    if !matches!(event_type, EVENT_KEY_DOWN | EVENT_KEY_UP) {
+        return ListSwallow::No;
+    }
+    // SAFETY: CoreGraphics supplied a valid keyboard event.
+    let code = unsafe { CGEventGetIntegerValueField(event, KEYBOARD_EVENT_KEYCODE) } as u16;
+    let Some(bit) = 1u128.checked_shl(u32::from(code)) else {
+        return ListSwallow::No;
+    };
+    let mut taken = TAKEN.lock().unwrap_or_else(|error| error.into_inner());
+    if event_type == EVENT_KEY_UP {
+        let ours = *taken & bit != 0;
+        *taken &= !bit;
+        return if ours {
+            ListSwallow::AfterListener
+        } else {
+            ListSwallow::No
+        };
+    }
+    let suggesting = suggesting();
+    if !list_takes_keys(
+        crate::app_settings::capture_on(),
+        list_open() || suggesting,
+        crate::app_settings::hotkey_capture_active(),
+    ) {
+        return ListSwallow::No;
+    }
+    // SAFETY: CoreGraphics supplied a valid event.
+    let flags = unsafe { CGEventGetFlags(event) };
+    if crate::app_settings::runtime_hotkeys()
+        .all()
+        .iter()
+        .flatten()
+        .any(|hotkey| hotkey.matches_key_press(code, flags))
+    {
+        return ListSwallow::No;
+    }
+    let mut typed = [0u16; 8];
+    let mut length = 0usize;
+    // SAFETY: the buffer holds `typed.len()` UTF-16 units; CoreGraphics
+    // writes at most that many and reports how many in `length`.
+    unsafe { CGEventKeyboardGetUnicodeString(event, typed.len(), &mut length, typed.as_mut_ptr()) };
+    let typed = String::from_utf16_lossy(&typed[..length.min(typed.len())]);
+    match list_key(code, flags, &typed) {
+        // The suggestions take only their digits; the rest goes on.
+        ListTap::Key(key @ CapsuleKey::Digit(_)) if suggesting => {
+            *taken |= bit;
+            drop(taken);
+            if capsule_key(key) {
+                ListSwallow::AfterListener
+            } else {
+                *TAKEN.lock().unwrap_or_else(|error| error.into_inner()) &= !bit;
+                ListSwallow::No
+            }
+        }
+        _ if suggesting => ListSwallow::No,
+        ListTap::Pass => ListSwallow::No,
+        ListTap::Swallow => {
+            *taken |= bit;
+            ListSwallow::AfterListener
+        }
+        ListTap::Key(key) => {
+            *taken |= bit;
+            drop(taken);
+            let escape = key == CapsuleKey::Escape;
+            capsule_key(key);
+            if escape {
+                ListSwallow::Only
+            } else {
+                ListSwallow::AfterListener
+            }
+        }
+    }
 }
 
 /// What the session tap does with an event while a capture records.
@@ -884,6 +1017,7 @@ impl ShortcutSuppression {
                 paste_last: Some(paste_last),
                 paste_meeting: Some(paste_meeting),
                 capture: None,
+                capture_list: None,
             },
             delivered,
             false,
@@ -4017,6 +4151,42 @@ mod tests {
         );
     }
 
+    /// A capsule list left open when captures are turned off takes no keys.
+    #[cfg(hex_capture)]
+    #[test]
+    fn the_list_takes_keys_only_while_captures_are_on() {
+        assert!(list_takes_keys(true, true, false));
+        assert!(!list_takes_keys(false, true, false));
+        assert!(!list_takes_keys(true, false, false));
+        assert!(!list_takes_keys(true, true, true));
+    }
+
+    /// Escape during a dictation hold while a screen capture records cancels
+    /// only the dictation: the capture shortcut lets it pass, and the
+    /// listener never hands it to the recording.
+    #[cfg(hex_capture)]
+    #[test]
+    fn escape_during_a_capture_cancels_only_the_dictation_hold() {
+        use crate::capture_host::{CaptureShortcut, ShortcutAction, ShortcutActivity};
+        let now = capture_time();
+        let mut hotkey = test_hotkey(true, now);
+        let escape = InputEvent::Key {
+            code: ESCAPE_KEY_CODE,
+            down: true,
+            flags: OPTION_KEY_MASK,
+        };
+        let mut capture = CaptureShortcut::default();
+        let recording = ShortcutActivity::Recording {
+            elapsed: std::time::Duration::from_secs(5),
+        };
+        assert_eq!(
+            capture.input(escape, RuntimeHotkeys::default(), recording),
+            ShortcutAction::None
+        );
+        assert!(!capture.takes_escape());
+        assert_eq!(hotkey.process(escape, now), Some(HotkeyAction::Cancel));
+    }
+
     #[test]
     fn escape_is_suppressed_while_it_controls_dictation() {
         let mut suppression = ShortcutSuppression::default();
@@ -4121,6 +4291,44 @@ mod tests {
         assert!(suppression.process_all(key(true), hotkeys, true, false));
         assert!(suppression.process_all(key(false), hotkeys, true, false));
         assert!(!suppression.process_all(key(true), RuntimeHotkeys::default(), true, false));
+    }
+
+    /// The send-to list's ⌥⇧V is Hex's only while the capsule takes it
+    /// (`app_settings::runtime_hotkeys` has it only then); otherwise it's an
+    /// ordinary chord that reaches the app.
+    #[test]
+    fn the_list_shortcut_is_suppressed_only_while_matched() {
+        let list = RuntimeHotkey {
+            modifiers: crate::app_settings::HotkeyModifiers {
+                option: Some(crate::app_settings::ModifierSide::Either),
+                shift: Some(crate::app_settings::ModifierSide::Either),
+                ..Default::default()
+            },
+            key_code: Some(9),
+        };
+        let taken = RuntimeHotkeys {
+            paste_last: None,
+            capture_list: Some(list),
+            ..RuntimeHotkeys::default()
+        };
+        let free = RuntimeHotkeys {
+            capture_list: None,
+            ..taken
+        };
+        let flags = OPTION_KEY_MASK | SHIFT_KEY_MASK;
+        assert!(!is_chord_evidence(9, flags, taken));
+        assert!(is_chord_evidence(9, flags, free));
+        let key = |down| InputEvent::Key {
+            code: 9,
+            down,
+            flags,
+        };
+        let mut suppression = ShortcutSuppression::default();
+        assert!(suppression.process_all(key(true), taken, true, false));
+        // The release goes where the press went, even once the capsule let go.
+        assert!(suppression.process_all(key(false), free, true, false));
+        assert!(!suppression.process_all(key(true), free, true, false));
+        assert!(!suppression.process_all(key(false), taken, true, false));
     }
 
     #[test]

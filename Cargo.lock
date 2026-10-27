@@ -918,7 +918,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "windows 0.62.2",
+ "windows 0.61.3",
 ]
 
 [[package]]
@@ -1904,7 +1904,7 @@ dependencies = [
  "log",
  "presser",
  "thiserror 2.0.21",
- "windows 0.62.2",
+ "windows 0.61.3",
 ]
 
 [[package]]
@@ -3641,7 +3641,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.45.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4484,7 +4484,7 @@ dependencies = [
 [[package]]
 name = "rune"
 version = "0.0.1"
-source = "git+https://github.com/anomalyco/rune.git?rev=a4d39795d402a0e8db7abd5b652b4de662a69b99#a4d39795d402a0e8db7abd5b652b4de662a69b99"
+source = "git+https://github.com/anomalyco/rune.git?rev=36f4b7fe65cb35a385d39165fef158d51b758905#36f4b7fe65cb35a385d39165fef158d51b758905"
 dependencies = [
  "arboard",
  "blake3",
@@ -4534,6 +4534,8 @@ dependencies = [
  "web-sys",
  "web-time",
  "wgpu",
+ "wgpu-core",
+ "wgpu-hal",
  "windows-sys 0.59.0",
  "winit",
  "x11rb 0.13.2",
@@ -4545,7 +4547,7 @@ dependencies = [
 [[package]]
 name = "rune-kit"
 version = "0.0.1"
-source = "git+https://github.com/anomalyco/rune.git?rev=a4d39795d402a0e8db7abd5b652b4de662a69b99#a4d39795d402a0e8db7abd5b652b4de662a69b99"
+source = "git+https://github.com/anomalyco/rune.git?rev=36f4b7fe65cb35a385d39165fef158d51b758905#36f4b7fe65cb35a385d39165fef158d51b758905"
 dependencies = [
  "rune",
  "rune-motion",
@@ -4555,12 +4557,12 @@ dependencies = [
 [[package]]
 name = "rune-motion"
 version = "0.1.0"
-source = "git+https://github.com/anomalyco/rune.git?rev=a4d39795d402a0e8db7abd5b652b4de662a69b99#a4d39795d402a0e8db7abd5b652b4de662a69b99"
+source = "git+https://github.com/anomalyco/rune.git?rev=36f4b7fe65cb35a385d39165fef158d51b758905#36f4b7fe65cb35a385d39165fef158d51b758905"
 
 [[package]]
 name = "rune-theme-opencode"
 version = "0.0.1"
-source = "git+https://github.com/anomalyco/rune.git?rev=a4d39795d402a0e8db7abd5b652b4de662a69b99#a4d39795d402a0e8db7abd5b652b4de662a69b99"
+source = "git+https://github.com/anomalyco/rune.git?rev=36f4b7fe65cb35a385d39165fef158d51b758905#36f4b7fe65cb35a385d39165fef158d51b758905"
 dependencies = [
  "rune",
  "rune-kit",
@@ -5755,9 +5757,9 @@ dependencies = [
 
 [[package]]
 name = "transcribe-cpp"
-version = "0.2.4"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8afa3f82415ece32f944e0d5ad347716c7e86d41ee8727ad8143afb080a6a60c"
+checksum = "8bab65d30f5a4c3ea0ab6f38236823389f3914b0605bbc0073a4ec88018c0714"
 dependencies = [
  "log",
  "thiserror 2.0.21",
@@ -5766,9 +5768,9 @@ dependencies = [
 
 [[package]]
 name = "transcribe-cpp-sys"
-version = "0.2.4"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c6946c7bf90046fc51e5bc25373a4f6270ca10fdcf4f35b1174075e43c535b5"
+checksum = "23a837974fdb873998a59a21ad2bf5a4b7bbf721c20d03d2a3ab8c221726a444"
 dependencies = [
  "cmake",
  "serde_json",
@@ -6075,6 +6077,7 @@ dependencies = [
  "rubato",
  "rune",
  "rune-kit",
+ "rune-motion",
  "rune-theme-opencode",
  "scrawl-capture",
  "screencapturekit",

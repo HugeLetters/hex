@@ -150,7 +150,11 @@ impl OfflineGgufSession {
             Ok("1") => true,
             _ => false,
         };
-        if !self.model.capabilities().supports_streaming {
+        if !self
+            .model
+            .capabilities()
+            .is_ok_and(|capabilities| capabilities.supports_streaming)
+        {
             return None;
         }
         let device_type = self.model.device().ok()?.device_type;
@@ -241,7 +245,7 @@ impl OfflineGgufSession {
         if let Some(cancel) = job_cancel() {
             session.set_cancel_token(&cancel);
         }
-        let result = session.run(samples, options);
+        let result = keep_repetition_partial(session.run(samples, options));
         drop(session);
         if result.is_ok() {
             self.last_run = Some(Instant::now());
@@ -289,6 +293,21 @@ impl OfflineGgufSession {
     }
 }
 
+/// transcribe-cpp 0.4 stops a decoder that starts looping and reports the text
+/// before the loop as an error; 0.2 returned the looped text as success. Keep
+/// returning text.
+fn keep_repetition_partial(
+    result: transcribe_cpp::Result<transcribe_cpp::Transcript>,
+) -> transcribe_cpp::Result<transcribe_cpp::Transcript> {
+    match result {
+        Err(transcribe_cpp::Error::OutputRepetition {
+            partial: Some(partial),
+            ..
+        }) => Ok(*partial),
+        result => result,
+    }
+}
+
 fn ran_within(last_run: Option<Instant>, now: Instant, window: Duration) -> bool {
     last_run.is_some_and(|last_run| now.saturating_duration_since(last_run) < window)
 }
@@ -308,6 +327,29 @@ mod tests {
             Some(now - Duration::from_secs(60)),
             now,
             window
+        ));
+    }
+
+    #[test]
+    fn a_decode_stopped_for_repeating_keeps_its_text_and_truncation_still_fails() {
+        let transcript = |text: &str| {
+            Some(Box::new(transcribe_cpp::Transcript {
+                text: text.into(),
+                ..Default::default()
+            }))
+        };
+        let repeated = keep_repetition_partial(Err(transcribe_cpp::Error::OutputRepetition {
+            message: "loop".into(),
+            partial: transcript("send it now"),
+        }));
+        assert_eq!(repeated.unwrap().text, "send it now");
+        let truncated = keep_repetition_partial(Err(transcribe_cpp::Error::OutputTruncated {
+            message: "budget".into(),
+            partial: transcript("send it"),
+        }));
+        assert!(matches!(
+            truncated,
+            Err(transcribe_cpp::Error::OutputTruncated { .. })
         ));
     }
 

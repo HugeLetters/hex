@@ -83,8 +83,11 @@ hex capture start|stop|cancel|status     // `--features capture`; POST /control 
   publishes it on every change; engine progress moves a capture on but never
   settles it. The capsule, the router, and `hex capture list` subscribe here
   rather than to the host.
-- Not built yet: the capsule, the ink and laser overlays, routing, delivery,
-  iPhone ingest, and moving the ingest token.
+- Routing and delivery (step 5), a cabled iPhone, the capsule, the on-screen
+  picker, and the ink and laser overlays are built; see those sections and
+  `docs/features/capture.md`. Not built yet: iPhone ingest (ScrawlKit
+  pairing), moving the ingest token, and a listener key path for the open
+  list (⌥⇧V, typing, arrows, Return).
 
 Step 4, first half (the shortcut, input, Escape) with the pane, import, and
 coexistence from step 5:
@@ -137,7 +140,7 @@ skipped while a capture is unfinished or Scrawl.app runs
   it only while the experiment is on. Its scenes (`mac-scrawl*`) render only
   from a feature build, so they have no goldens (goldens run on Linux).
 - iPhone pairing is omitted, not shown disabled: it needs the ingest server,
-  which Hex doesn't run yet.
+  which Hex doesn't run yet. A cabled iPhone needs no row.
 
 ### Features and gating
 
@@ -169,7 +172,13 @@ skipped while a capture is unfinished or Scrawl.app runs
   (`target/<profile>`, three levels above `OUT_DIR`), and the engine looks
   for it beside its own executable (`helper::path`); `$SCRAWL_HELPER`
   overrides. Missing, finish keeps the 480 px candidate frames as keyframes.
-  Hex's capture path uses it only for movie decoding, which needs no TCC.
+  Hex's capture path uses it for movie decoding, which needs no TCC, for
+  `devices` (the USB registry, no TCC), and for `mirror --no-microphone`, a
+  cabled iPhone's capture, which needs Camera.
+- Camera belongs to Hex, the helper's responsible process, so only
+  `HEX_CAPTURE=1` builds add `NSCameraUsageDescription` to Hex.app's
+  Info.plist (and the helper's embedded one); `scripts/validate-app.sh`
+  refuses a release bundle that has it.
 - `HEX_CAPTURE=1 scripts/build-app.sh` builds with `--features capture` and
   `SCRAWL_HELPER_PLIST=packaging/macos/scrawl-helper-Info.plist` (embedded
   bundle ID `anomaly.hex.scrawl-helper`, name Hex), copies the helper to
@@ -287,6 +296,25 @@ where the work starts (the `capture_host` worker), not only in the window.
   Their window ids go to the engine through `Host::own_windows` so screen
   capture leaves them out and clicks pass through.
 - Each state has a `--snap` scene and a storybook entry.
+- Scrawl's switch chips (`docs/capture.md`): a shortcut-started recording opens
+  onto Area · Window · Screen for 3.5 s (never folding while hovered) or until
+  the first click, scroll, or stroke. A chip restarts rather than retargets:
+  Window and Area discard the recording and turn the capsule into the picker.
+  The host side is built: `CaptureTarget`, `CaptureCommand::{Start, Discard, Switch}`
+  through `RecognitionControl::CaptureCommand`, `RecordingCapture::{target,
+  worked}`, `SettledCapture::error`, and `begin_picking` for ⌥⇧S and Esc while
+  the picker is open. The shortcut starts on its modifiers' release, as
+  Scrawl's does. The iPhone chip's host side is built too:
+  `CaptureTarget::Phone`, `TargetKind::Phone`, `CaptureSnapshot.phone` (the
+  cabled phone's name from a `capture-phone` look at each start and on
+  `CaptureCommand::FindPhone`). The mirror runs with `--no-microphone`; the
+  narration is Hex's timeline audio moved onto the movie's clock
+  (`RecordedAudio::since`) and transcribed by Hex's transcriber. A mirror
+  that ends on its own (`Event::PhoneEnded`) finishes the capture at the
+  listener's next reap.
+- The done capsule's route chips read `SettledCapture.route` (its answer,
+  then only the deliveries the capsule can't know itself) and send
+  `CaptureCommand::{Send, Undo, Redirect}`. Built; `offer` isn't drawn.
 - A Scrawl pane under Experiments, feature-owned (D-5): opt-in, shortcut,
   Screen Recording, transcriber, captures folder, retention, and "Use Hex for
   captures" while Scrawl runs (built; iPhone joins with ingest).
@@ -295,20 +323,27 @@ where the work starts (the `capture_host` worker), not only in the window.
 
 ## Routing and delivery
 
-- Captures route through the engine's router in-process. The Send to session
-  experiment switches from `scrawl router decide` to the same function, and
-  the JSON contract in `docs/` becomes the function's types.
-- Delivery uses the engine's queue and retry path. Hex never stores the
-  OpenCode server password itself; the engine reads it as Scrawl does.
-- `live.ndjson` gets ids, bands, scores, model, stages, and outcomes, never
-  transcript, summary, or window text.
+- Built (`capture_host/routing.rs`): Scrawl's router (`crates/router`) runs
+  in Hex's process with `capture.routing` (imported once from Scrawl; never a
+  Jev key) and Scrawl's own router folders, so `scrawl router undo`, rule
+  offers, and evals see Hex's sends as Scrawl's. A `capture-look` thread
+  reads the tab, terminal, and sessions at the stop; the one `capture-route`
+  thread (queue 16) decides once the bundle is written, waits out a rule's
+  3 s undo, sends, and carries out the capsule's Send, Undo, and Redirect on
+  the newest capture in order. Each change lands in `last.route`.
+- Delivery uses the engine's delivery path. Queued sends retry every 15 s,
+  except in tests, while Scrawl.app runs, or while anything serves the ingest
+  port (that process retries). Hex never stores the OpenCode server password
+  itself; the engine reads it as Scrawl does.
+- Not built: `live.ndjson` events for routing (ids, bands, scores, model,
+  stages, and outcomes, never transcript, summary, or window text).
 
 ## Coexistence with Scrawl
 
 - One owner at a time. While Scrawl (`dev.kitlangton.scrawl`) runs, Hex does
   not register the capture shortcut, run retention, bind the ingest port
   (47777), or run delivery retries. Settings shows "Use Hex for captures",
-  which quits Scrawl only on that click (built, without ingest and delivery).
+  which quits Scrawl only on that click (built, without ingest).
 - Configuration: a one-time, read-only import of Scrawl's settings into
   `settings.json` `capture.*` keys, each with a `hex settings` key (built).
   The ingest token moves to an owner-only file in Hex's support folder so
@@ -328,10 +363,12 @@ where the work starts (the `capture_host` worker), not only in the window.
 
 ## CLI
 
-Through `POST /control`, like everything else: `hex capture start|stop|cancel|
-status` (built, behind the build option), `hex capture list|show`, `hex capture send <id> [--to <session>]`,
-and `hex capture route <id> --explain`. Engine tools (autocrop eval, capture
-simulation, reprocess) mount under `hex dev capture` in debug builds.
+Through `POST /control`, like everything else, behind the build option
+(built; `docs/cli.md`): `hex capture start|stop|cancel|status`,
+`hex capture list [--limit N]|show <capture>`, `hex capture send <capture>
+[--to <session>]`, and `hex capture route <capture> [--ask-jev]`. Not built:
+engine tools (autocrop eval, capture simulation, reprocess) under
+`hex dev capture` in debug builds.
 
 ## Order on the branch
 
@@ -342,10 +379,9 @@ simulation, reprocess) mount under `hex dev capture` in debug builds.
    Built: copied without history from `e351ddb`.
 3. `capture_host` with the experiment gate, the capture sink, Parakeet words,
    and a headless `hex capture start|stop` producing a bundle. Built.
-4. Input and Escape (built), then the Rune capsule and ink overlay with
-   scenes.
-5. Router in-process, the Scrawl pane, import, and coexistence (the pane,
-   import, and coexistence are built).
+4. Input and Escape, then the Rune capsule, picker, and ink overlay with
+   scenes and motion traces. Built.
+5. Router in-process, the Scrawl pane, import, and coexistence. Built.
 6. Compare Parakeet and SpeechAnalyzer word times on recorded captures. Done
    (Oct 25): Parakeet's lag is corrected in `capture_host`.
 

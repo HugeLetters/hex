@@ -1,6 +1,6 @@
 //! The Scrawl pane (the `capture` experiment, in builds with the `capture`
 //! build option): captures inside Hex. The opt-in, the capture shortcut,
-//! Screen Recording, the transcriber, the captures folder and how long
+//! the send-to list's shortcut, Screen Recording, the transcriber, the captures folder and how long
 //! captures are kept, and Scrawl's own app, which keeps the shortcut while
 //! it runs until "Use Hex for captures" asks it to quit.
 
@@ -27,13 +27,25 @@ fn description(enabled: bool) -> &'static str {
 }
 
 /// Turns captures on or off; turning them on fails while the capture
-/// shortcut collides with another, and leaves the shortcut as it is.
+/// shortcut or the send-to list's collides with another, and leaves the
+/// shortcuts as they are.
 fn set_enabled(settings: &mut AppSettings, enabled: bool) -> Result<(), &'static str> {
     if enabled
         && super::settings::conflicts(settings, ShortcutTarget::Capture, &settings.capture.hotkey)
     {
         return Err(tr(
             "The capture shortcut is already in use. Change it below before turning captures on.",
+        ));
+    }
+    if enabled
+        && super::settings::conflicts(
+            settings,
+            ShortcutTarget::CaptureList,
+            &settings.capture.list_hotkey,
+        )
+    {
+        return Err(tr(
+            "The send-to list shortcut is already in use. Change it below before turning captures on.",
         ));
     }
     settings.capture.enabled = enabled;
@@ -151,6 +163,18 @@ fn shortcut_rows(ui: &Ui, p: Paint, view: &ScrawlView) -> Vec<El> {
         Some((purpose.to_string(), p.muted())),
         shortcut_control(ui, p, ShortcutTarget::Capture),
     )];
+    let list_purpose = if enabled {
+        tr("Opens the list of sessions while a capture is showing or waiting to be sent")
+    } else {
+        tr("Saved for when captures are on")
+    };
+    rows.push(described_row(
+        p,
+        "capture-list-shortcut",
+        tr("Send-to list"),
+        Some((list_purpose.to_string(), p.muted())),
+        shortcut_control(ui, p, ShortcutTarget::CaptureList),
+    ));
     if enabled {
         rows.push(setting_row(
             p,
@@ -349,6 +373,19 @@ mod tests {
         assert_eq!(serde_json::to_value(&taken).unwrap(), before);
         // Turning captures off always works.
         set_enabled(&mut taken, false).unwrap();
+        // The send-to list's ⌥⇧V is Paste Last's default: rebind one first.
+        let mut list = AppSettings::default();
+        assert!(
+            set_enabled(&mut list, true)
+                .unwrap_err()
+                .contains("send-to list")
+        );
+        list.paste_last_hotkey = Some(crate::app_settings::HotkeyBinding {
+            modifiers: crate::app_settings::HotkeyModifiers::option_command(),
+            key: Some(crate::app_settings::HotkeyKey::named("v")),
+        });
+        set_enabled(&mut list, true).unwrap();
+        assert!(list.capture.enabled);
     }
 
     #[test]

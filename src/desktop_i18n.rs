@@ -269,6 +269,12 @@ const TRANSLATIONS: &[(&str, [&str; 5])] = &[
     #[cfg(hex_capture)]
     ("Press to start and again to stop; Esc cancels", ["Naciśnij, aby zacząć, i ponownie, aby zakończyć; Esc anuluje", "按一次开始，再按一次停止；Esc 取消", "押すと開始、もう一度押すと停止。Esc でキャンセル", "Drücken zum Starten, erneut zum Beenden; Esc bricht ab", "Pulsa para empezar y otra vez para parar; Esc cancela"]),
     #[cfg(hex_capture)]
+    ("Send-to list", ["Lista wysyłania", "发送到列表", "送信先リスト", "Senden-an-Liste", "Lista de envío"]),
+    #[cfg(hex_capture)]
+    ("Opens the list of sessions while a capture is showing or waiting to be sent", ["Otwiera listę sesji, gdy nagranie jest widoczne lub czeka na wysłanie", "在捕获显示或等待发送时打开会话列表", "キャプチャが表示中または送信待ちのときにセッション一覧を開きます", "Öffnet die Liste der Sitzungen, solange eine Aufnahme angezeigt wird oder auf das Senden wartet", "Abre la lista de sesiones mientras una captura se muestra o espera a enviarse"]),
+    #[cfg(hex_capture)]
+    ("The send-to list shortcut is already in use. Change it below before turning captures on.", ["Skrót listy wysyłania jest już używany. Zmień go poniżej, zanim włączysz nagrywanie.", "发送到列表的快捷键已被占用。请先在下方更改，再开启捕获。", "送信先リストのショートカットはすでに使われています。オンにする前に下で変更してください。", "Das Kürzel für die Senden-an-Liste wird bereits verwendet. Ändere es unten, bevor du Aufnahmen einschaltest.", "El atajo de la lista de envío ya está en uso. Cámbialo abajo antes de activar las capturas."]),
+    #[cfg(hex_capture)]
     ("Saved for when captures are on", ["Zapisany na czas, gdy nagrywanie będzie włączone", "保存，供开启捕获后使用", "キャプチャをオンにしたときのために保存されます", "Gespeichert für eingeschaltete Aufnahmen", "Guardado para cuando actives las capturas"]),
     #[cfg(hex_capture)]
     ("Screen Recording", ["Nagrywanie ekranu", "屏幕录制", "画面収録", "Bildschirmaufnahme", "Grabación de pantalla"]),
@@ -287,7 +293,6 @@ const TRANSLATIONS: &[(&str, [&str; 5])] = &[
     ("Shared with Scrawl, so both list the same captures", ["Wspólny ze Scrawl, więc obie aplikacje widzą te same nagrania", "与 Scrawl 共用，两者列出相同的捕获", "Scrawl と共有するので、どちらにも同じキャプチャが並びます", "Mit Scrawl geteilt, beide zeigen dieselben Aufnahmen", "Compartida con Scrawl, así ambos muestran las mismas capturas"]),
     #[cfg(hex_capture)]
     ("Keep", ["Przechowuj", "保留", "保持期間", "Behalten", "Conservar"]),
-    #[cfg(hex_capture)]
     ("Add application", ["Dodaj aplikację", "添加应用", "アプリを追加", "App hinzufügen", "Añadir aplicación"]),
     ("Add transformation", ["Dodaj transformację", "添加转换", "変換を追加", "Transformation hinzufügen", "Añadir transformación"]),
     ("Close", ["Zamknij", "关闭", "閉じる", "Schließen", "Cerrar"]),
