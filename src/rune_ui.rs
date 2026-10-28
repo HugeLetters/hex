@@ -33,6 +33,7 @@ mod onboarding;
 mod picker;
 mod platform;
 mod platform_settings;
+pub(crate) mod playground;
 #[cfg(hex_capture)]
 mod scrawl;
 mod settings;
@@ -163,12 +164,34 @@ pub(crate) fn run_app(
 }
 
 /// The window as a Rune app whose lifetime the caller chooses, connected to
-/// its host through `connect`.
+/// its host through `connect`, with the playground when its experiment is on.
 pub(crate) fn app(connect: host::Connect) -> rune::App<Ui> {
-    let app = rune::App::new(spec())
+    build(connect, playground::enabled())
+}
+
+/// `hex app -- --snap …`: a headless render of a fixture scene. With the
+/// `playground` experiment on, `--playground [story]` renders the playground.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(crate) fn render_app(rune_args: Vec<String>) -> rune::App<Ui> {
+    let playground = rune_args.iter().any(|arg| arg == "--playground");
+    build(Default::default(), playground && playground::enabled()).args(rune_args)
+}
+
+fn build(connect: host::Connect, with_playground: bool) -> rune::App<Ui> {
+    let spec = if with_playground {
+        playground::spec(spec())
+    } else {
+        spec()
+    };
+    let app = rune::App::new(spec)
         .init(move || Ui::load_with(connect))
         .on_close(on_close)
         .compositor(hero::HeroCompositor::default());
+    let app = if with_playground {
+        playground::attach(app)
+    } else {
+        app
+    };
     let window = app.handle();
     // Nothing shown reads the handle, so this asks for no frame. The first
     // frame's poll ran without it, so the window's tick starts from here.
@@ -310,7 +333,14 @@ pub(crate) fn meeting_failed(ui: &mut Ui, error: String) {
 /// scene, or `live` for the running Hex's `hex status`.
 #[cfg(target_os = "linux")]
 pub(crate) fn render() {
-    rune::run_with(spec(), hero::HeroCompositor::default());
+    let with_playground =
+        std::env::args().any(|arg| arg == "--playground") && playground::enabled();
+    if !with_playground {
+        rune::run_with(spec(), hero::HeroCompositor::default());
+        return;
+    }
+    let app = rune::App::new(playground::spec(spec())).compositor(hero::HeroCompositor::default());
+    playground::attach(app).run();
 }
 
 /// The window's logical size, which every pane and the picker fit.
@@ -319,9 +349,13 @@ const WINDOW_SIZE: (f32, f32) = (980.0, 760.0);
 /// One fixed size the user cannot change. Tiling window managers float such
 /// a window instead of tiling it: sway, Hyprland, niri, and i3 on Linux
 /// (Wayland has no other way to ask for floating), and AeroSpace, yabai, and
-/// Spaceman on macOS, where the first-run tour opens centred this way.
+/// Spaceman on macOS, where the first-run tour opens centred this way. With
+/// the playground, it resizes, so the stage beside its columns has room.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn fixed_window() -> rune::WindowOptions {
+    if playground::enabled() {
+        return rune::WindowOptions::default();
+    }
     rune::WindowOptions {
         min_size: Some(WINDOW_SIZE),
         max_size: Some(WINDOW_SIZE),
@@ -535,10 +569,19 @@ pub(crate) struct Ui {
     pane: Pane,
     open: Option<Menu>,
     // General
-    microphones: Result<Vec<String>, String>,
+    microphones: Result<crate::audio::InputDevices, String>,
+    /// The [`crate::audio::input_route_generation`] `microphones` was listed at.
+    microphones_route: Option<u64>,
+    /// The poll clock `microphones` was last listed at.
+    microphones_listed_at: f64,
+    /// A listing in flight. Listing reads CoreAudio or COM endpoint
+    /// properties, which can block, so it runs off the UI thread.
+    microphones_listing:
+        Option<std::sync::mpsc::Receiver<Result<crate::audio::InputDevices, String>>>,
     confirm_release: bool,
-    /// General's Advanced disclosure is open.
-    advanced: bool,
+    /// General's Advanced disclosure, once pressed: open or closed. Until
+    /// then it is open only while an advanced setting is in use.
+    advanced: Option<bool>,
     capture: Capture,
     hints: TextEdit,
     vocabulary: vocabulary::VocabularyEditor,
@@ -614,9 +657,12 @@ impl Ui {
             service_settings: None,
             pane: Pane::General,
             open: None,
-            microphones: Ok(Vec::new()),
+            microphones: Ok(Default::default()),
+            microphones_route: None,
+            microphones_listed_at: 0.0,
+            microphones_listing: None,
             confirm_release: false,
-            advanced: false,
+            advanced: None,
             capture: Capture::Idle,
             hints,
             vocabulary,
@@ -757,7 +803,19 @@ impl Ui {
                 .note_asked(crate::onboarding::PermissionKind::Microphone),
             platform::PlatformRequest::Permission(
                 crate::onboarding::PermissionAction::ShowGuide(kind),
-            ) => self.platform.note_asked(*kind),
+            ) => {
+                // Previews grant Screen Recording on the second ask, as for
+                // system audio.
+                #[cfg(hex_capture)]
+                if *kind == crate::onboarding::PermissionKind::ScreenRecording
+                    && self.host.is_fixture()
+                    && self.platform.asked(*kind)
+                    && let Some(view) = self.platform.scrawl.as_mut()
+                {
+                    view.screen_recording = true;
+                }
+                self.platform.note_asked(*kind);
+            }
             platform::PlatformRequest::SystemAudio => {
                 let kind = crate::onboarding::PermissionKind::SystemAudio;
                 // Previews grant on the second ask, so a scene can play
@@ -768,25 +826,12 @@ impl Ui {
                 self.platform.note_asked(kind);
             }
             #[cfg(hex_capture)]
-            platform::PlatformRequest::Scrawl(request) => {
+            platform::PlatformRequest::Scrawl(platform::ScrawlRequest::QuitScrawl) => {
                 let fixture = self.host.is_fixture();
                 if let Some(view) = self.platform.scrawl.as_mut() {
-                    match request {
-                        platform::ScrawlRequest::ScreenRecording => {
-                            // Previews grant on the second ask, as for
-                            // system audio.
-                            if fixture && view.screen_recording_asked {
-                                view.screen_recording = true;
-                            }
-                            view.screen_recording_asked = true;
-                        }
-                        platform::ScrawlRequest::QuitScrawl => {
-                            view.quitting_scrawl = true;
-                            if fixture {
-                                view.scrawl_running = false;
-                            }
-                        }
-                        _ => {}
+                    view.quitting_scrawl = true;
+                    if fixture {
+                        view.scrawl_running = false;
                     }
                 }
             }
@@ -817,12 +862,16 @@ impl Ui {
             _ => {}
         }
         let is_relaunch = request == platform::PlatformRequest::Relaunch;
-        if let Err(error) = self.host.send(request) {
-            if is_relaunch {
-                self.platform.relaunch_failed = true;
-            } else {
-                self.error = Some(error);
+        match self.host.send(request) {
+            // The frame draws right after its actions, before the next poll,
+            // so read the host's answer now (the poll the frame runs anyway,
+            // its refresh moved to now by `send`) rather than show stale
+            // state for a tick.
+            Ok(()) => {
+                self.host.poll(&mut self.platform);
             }
+            Err(_) if is_relaunch => self.platform.relaunch_failed = true,
+            Err(error) => self.error = Some(error),
         }
     }
 
@@ -898,6 +947,10 @@ impl Ui {
         match pane {
             Pane::History => self.history.reload(),
             Pane::HudLab => self.ask(platform::PlatformRequest::ConfigureHud(self.platform.hud)),
+            #[cfg(hex_capture)]
+            Pane::Scrawl => self.ask(platform::PlatformRequest::Scrawl(
+                platform::ScrawlRequest::Refresh,
+            )),
             _ => {}
         }
     }
@@ -988,6 +1041,19 @@ fn poll(ui: &mut Ui, clock: f64, tx: &mut Tx) -> bool {
     changed |= ui.modes.poll(ui.live());
     changed |= modes::poll_chooser(ui);
     let login_unknown = ui.platform.login_item.is_none();
+    changed |= settings::poll_microphones(ui);
+    // General names the input in use; list again when the OS reports an
+    // input change. Windows reports a default change only to an open
+    // default stream, so there the list is also refreshed every few seconds.
+    if ui.pane == Pane::General
+        && ui.live()
+        && ui.window.as_ref().is_some_and(rune::AppHandle::is_visible)
+        && (ui.microphones_route != Some(crate::audio::input_route_generation())
+            || (cfg!(target_os = "windows") && clock >= ui.microphones_listed_at + 3.0))
+    {
+        settings::refresh_microphones(ui);
+        ui.microphones_listed_at = clock;
+    }
     changed |= ui.host.poll(&mut ui.platform);
     // macOS reports the login item moments after launch; its switch replaces
     // "Checking…" at once instead of fading in and reflowing the row.
@@ -1102,7 +1168,22 @@ fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
     if let Some(tour) = onboarding::overlay(ui, p) {
         layer.push(tour);
     }
-    rune_kit::root(window, layer).on_window_focus(explainer::window_focused)
+    rune_kit::root(window, layer).on_window_focus(window_focused)
+}
+
+fn window_focused(ui: &mut Ui, focused: bool, tx: &mut Tx) {
+    explainer::window_focused(ui, focused, tx);
+    if focused {
+        ui.send(Request::Desktop(DesktopAction::WindowFocused));
+    }
+    // Screen Recording is often switched on in System Settings, so the
+    // Scrawl pane reads it again as soon as Hex comes back.
+    #[cfg(hex_capture)]
+    if focused && ui.pane == Pane::Scrawl && ui.platform.scrawl.is_some() {
+        ui.ask(platform::PlatformRequest::Scrawl(
+            platform::ScrawlRequest::Refresh,
+        ));
+    }
 }
 
 /// macOS draws the traffic lights over the sidebar (Rune's window has a
@@ -1166,12 +1247,17 @@ fn sidebar(ui: &Ui, p: Paint) -> El {
         nav = nav.child(slot);
     }
     let action = match ui.view.as_ref().map(|view| &view.update_status) {
-        Some(DesktopUpdateStatus::ReadyToRestart) => {
-            Some((tr("Restart to update"), DesktopAction::RestartIntoUpdate))
-        }
+        Some(DesktopUpdateStatus::ReadyToRestart) => Some((
+            tr("Restart to update").to_owned(),
+            DesktopAction::RestartIntoUpdate,
+        )),
         Some(DesktopUpdateStatus::Available) => {
-            Some((tr("Download update"), DesktopAction::OpenUpdate))
+            Some((tr("Download update").to_owned(), DesktopAction::OpenUpdate))
         }
+        Some(DesktopUpdateStatus::SwitchAvailable { channel, version }) => Some((
+            crate::updater::switch_label(channel, version),
+            DesktopAction::ConfirmUpdateSwitch,
+        )),
         _ => None,
     };
     // An available update is a state, not the screen's main action.
@@ -1185,7 +1271,7 @@ fn sidebar(ui: &Ui, p: Paint) -> El {
             .child(controls::button(
                 p,
                 "sidebar-update",
-                label,
+                &label,
                 controls::ButtonKind::Secondary,
                 move |ui: &mut Ui, _| ui.send(Request::Desktop(action.clone())),
             ))
@@ -1228,7 +1314,8 @@ fn update_status(ui: &Ui, p: Paint) -> Option<El> {
     Some(match &ui.view.as_ref()?.update_status {
         DesktopUpdateStatus::Unavailable
         | DesktopUpdateStatus::Available
-        | DesktopUpdateStatus::ReadyToRestart => return None,
+        | DesktopUpdateStatus::ReadyToRestart
+        | DesktopUpdateStatus::SwitchAvailable { .. } => return None,
         DesktopUpdateStatus::Managed => status(tr("Managed by your organization")),
         DesktopUpdateStatus::Checking => status(tr("Checking for updates…")),
         DesktopUpdateStatus::Downloading => status(tr("Downloading update")),
@@ -1459,10 +1546,11 @@ const SCENES: &[Scene] = &[
     ("menus", |ui| {
         *ui = portal_fixture();
         ui.open = Some(Menu::Microphone);
-        ui.microphones = Ok(vec![
-            "Built-in Audio Analog Stereo".into(),
-            "Shure MV7".into(),
-        ]);
+        ui.microphones = Ok(crate::audio::InputDevices {
+            names: vec!["Built-in Audio Analog Stereo".into(), "Shure MV7".into()],
+            system_default: Some("Shure MV7".into()),
+            default_is_hex_microphone: false,
+        });
         ui.confirm_release = true;
     }),
     ("voice-action", |ui| {
@@ -1617,6 +1705,11 @@ const SCENES: &[Scene] = &[
             TranscriptionModelId::ParakeetV3,
         ]);
     }),
+    ("mac-microphone-missing", |ui| {
+        *ui = mac_fixture();
+        ui.settings.microphone = Some("Shure MV7".into());
+        ui.open = Some(Menu::Microphone);
+    }),
     ("mac-settings-vocabulary", |ui| {
         *ui = mac_fixture();
         vocabulary::fixture(ui, true);
@@ -1651,7 +1744,11 @@ const SCENES: &[Scene] = &[
     }),
     ("mac-settings-advanced", |ui| {
         *ui = mac_fixture();
-        ui.advanced = true;
+        ui.advanced = Some(true);
+    }),
+    ("mac-settings-dev-channel", |ui| {
+        *ui = mac_fixture();
+        ui.settings.updates.channel = Some(crate::app_settings::UpdateChannel::Dev);
     }),
     ("mac-update-ready", |ui| {
         *ui = mac_fixture();
@@ -1894,6 +1991,15 @@ fn mac_fixture() -> Ui {
         },
     ];
     ui.settings.experimental.hex_microphone = true;
+    ui.microphones = Ok(crate::audio::InputDevices {
+        names: vec![
+            "Kit Pods".into(),
+            "MacBook Pro Microphone".into(),
+            "Studio Display Microphone".into(),
+        ],
+        system_default: Some("Kit Pods".into()),
+        default_is_hex_microphone: false,
+    });
     ui.meetings = meetings::MeetingsPane::fixture();
     ui
 }

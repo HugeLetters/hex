@@ -262,8 +262,6 @@ pub(super) enum Workspace {
 pub(super) struct ScrawlView {
     /// Screen Recording, which a capture needs to record the screen.
     pub(super) screen_recording: bool,
-    /// Allow was pressed since Screen Recording was last granted.
-    pub(super) screen_recording_asked: bool,
     /// Scrawl's own app runs, so it owns the capture shortcut.
     pub(super) scrawl_running: bool,
     /// Use Hex for captures was pressed and Scrawl has not quit yet.
@@ -289,8 +287,9 @@ impl ScrawlView {
 #[cfg(hex_capture)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ScrawlRequest {
-    /// Ask macOS for Screen Recording, or open its System Settings list.
-    ScreenRecording,
+    /// Read Screen Recording and Scrawl's app again now (the pane opened
+    /// or the window became key), not at the next once-a-second refresh.
+    Refresh,
     /// Use Hex for captures: ask Scrawl's own app to quit. Nothing else
     /// ever quits it.
     QuitScrawl,

@@ -10,6 +10,7 @@ use scrawl_capture::capture::Stage;
 use super::CaptureCapsule;
 use super::flow::{Action, Delivered, Dest, Failure, Input, Mode, Route, Undone};
 use super::ink::InkOverlay;
+use super::picker::PickerOverlay;
 use crate::capture_host::{
     CaptureCommand, CaptureRoute, CaptureSnapshot, CaptureTarget, RouteAnswer, RouteDelivery,
     RouteDest, TargetKind,
@@ -146,8 +147,8 @@ impl Follow {
             return inputs;
         }
         match route.delivery {
-            Some(RouteDelivery::Queued { to }) => {
-                inputs.push(Input::Delivered(Delivered::Queued { to }));
+            Some(RouteDelivery::Queued { to, why }) => {
+                inputs.push(Input::Delivered(Delivered::Queued { to, why }));
             }
             Some(RouteDelivery::Sent { to })
                 if matches!(was, Some(RouteDelivery::Queued { .. })) =>
@@ -273,6 +274,48 @@ fn capsule_route(answer: &RouteAnswer) -> Option<Route> {
         },
         RouteAnswer::Unreachable { why } => Route::Unreachable { why: why.clone() },
     })
+}
+
+/// The capsule, its picker, and the ink, installed together.
+pub(crate) struct CaptureOverlays {
+    capsule: CaptureCapsule,
+    picker: PickerOverlay,
+    ink: InkOverlay,
+    /// Whether screen recordings may see them.
+    shown: bool,
+}
+
+impl CaptureOverlays {
+    /// Adds the three overlays, prewarmed and hidden, and starts following
+    /// captures.
+    pub(crate) fn install<S: 'static>(app: &mut rune::App<S>) -> Self {
+        let picker = PickerOverlay::install(app, act);
+        let aim = picker.clone();
+        let capsule = CaptureCapsule::install(app, move |action| act(aim.resolve(action)));
+        capsule.attach(picker.clone());
+        let ink = InkOverlay::install(app);
+        follow(capsule.clone(), ink.clone());
+        Self {
+            capsule,
+            picker,
+            ink,
+            shown: crate::capture_host::own_windows_recorded(),
+        }
+    }
+
+    /// Follows `capture.show_overlays_in_recordings` on windows already
+    /// made; returns the new value when it changed.
+    pub(crate) fn follow_recordings(&mut self) -> Option<bool> {
+        let shown = crate::capture_host::own_windows_recorded();
+        if shown == self.shown {
+            return None;
+        }
+        self.shown = shown;
+        self.capsule.show_in_recordings(shown);
+        self.picker.show_in_recordings(shown);
+        self.ink.show_in_recordings(shown);
+        Some(shown)
+    }
 }
 
 /// Moves `capsule` with every published capture change, and wakes `ink` to
@@ -707,10 +750,16 @@ mod tests {
             site: None,
         };
         follow.next(&routed("a", guess(), None));
-        let queued = Some(RouteDelivery::Queued { to: "HEX".into() });
+        let queued = Some(RouteDelivery::Queued {
+            to: "HEX".into(),
+            why: "OpenCode can't see this Mac's files".into(),
+        });
         assert_eq!(
             follow.next(&routed("a", guess(), queued)),
-            [Input::Delivered(Delivered::Queued { to: "HEX".into() })]
+            [Input::Delivered(Delivered::Queued {
+                to: "HEX".into(),
+                why: "OpenCode can't see this Mac's files".into(),
+            })]
         );
         let sent = Some(RouteDelivery::Sent { to: "HEX".into() });
         assert_eq!(

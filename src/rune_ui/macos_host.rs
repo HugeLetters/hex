@@ -96,7 +96,9 @@ impl Backend {
             Request::Desktop(
                 action @ (DesktopAction::CheckForUpdates
                 | DesktopAction::OpenUpdate
-                | DesktopAction::RestartIntoUpdate),
+                | DesktopAction::RestartIntoUpdate
+                | DesktopAction::ConfirmUpdateSwitch
+                | DesktopAction::WindowFocused),
             ) => crate::macos_rune::update_action(&action),
             request => match &self.runtime {
                 Some(runtime) => runtime.send(request),
@@ -582,7 +584,13 @@ impl NativeHost for MacHost {
                 crate::onboarding::request_microphone();
             }
             PlatformRequest::Permission(PermissionAction::ShowGuide(kind)) => {
-                crate::permission_guide::show(kind);
+                // Screen Recording may have been granted since the last
+                // refresh; the refresh below then shows Allowed.
+                if kind != PermissionKind::ScreenRecording
+                    || !crate::meeting::screen_recording_permitted()
+                {
+                    crate::permission_guide::show(kind);
+                }
             }
             PlatformRequest::Permission(PermissionAction::Restart) => {
                 if !crate::onboarding::spawn_relaunch() {
@@ -765,6 +773,7 @@ impl NativeHost for MacHost {
             }
             PermissionKind::Accessibility => permissions.accessibility != PermissionState::Ready,
             PermissionKind::SystemAudio => !system_audio,
+            PermissionKind::ScreenRecording => !crate::meeting::screen_recording_permitted(),
         });
         changed |= state.permissions_asked.len() != asked_len;
         changed |= update(&mut state.login_item_checking, self.login_checking);
@@ -1279,13 +1288,11 @@ fn choose_folder() -> crate::file_dialog::Pending {
     )
 }
 
-/// The Scrawl pane's OS work: Screen Recording, Scrawl's own app, and the
-/// captures folder.
+/// The Scrawl pane's OS work: Scrawl's own app and the captures folder.
+/// Its Screen Recording Allow opens the permission guide.
 #[cfg(hex_capture)]
 #[derive(Default)]
 struct ScrawlHost {
-    /// macOS prompts for Screen Recording once; later asks open its list.
-    asked_screen_recording: bool,
     folder_choice: Option<crate::file_dialog::Pending>,
     folder_error: Option<String>,
 }
@@ -1295,15 +1302,8 @@ impl ScrawlHost {
     fn send(&mut self, request: super::platform::ScrawlRequest) {
         use super::platform::ScrawlRequest;
         match request {
-            ScrawlRequest::ScreenRecording => {
-                if std::mem::replace(&mut self.asked_screen_recording, true) {
-                    open_path(std::path::Path::new(
-                        "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture",
-                    ));
-                } else {
-                    crate::meeting::request_screen_recording();
-                }
-            }
+            // `send` moves the next refresh to now.
+            ScrawlRequest::Refresh => {}
             ScrawlRequest::QuitScrawl => crate::capture_host::quit_scrawl(),
             ScrawlRequest::RevealFolder => {
                 let folder = crate::app_settings::capture_settings().captures_dir();
@@ -1362,9 +1362,6 @@ impl ScrawlHost {
         let running = crate::capture_host::scrawl_running();
         changed |= update(&mut view.screen_recording, screen_recording);
         changed |= update(&mut view.scrawl_running, running);
-        if screen_recording {
-            changed |= update(&mut view.screen_recording_asked, false);
-        }
         if !running {
             changed |= update(&mut view.quitting_scrawl, false);
         }

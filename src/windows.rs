@@ -165,9 +165,7 @@ pub fn run(shutdown: &'static AtomicBool) -> Result<()> {
             // A headless render (`--snap`) draws fixtures without starting
             // the runtime and prints to the terminal that ran it.
             if !rune_args.is_empty() {
-                crate::rune_ui::app(Default::default())
-                    .args(rune_args)
-                    .run();
+                crate::rune_ui::render_app(rune_args).run();
                 return Ok(());
             }
             detach_from_console();
@@ -376,7 +374,7 @@ fn capture(
     let mut transcriber = LocalTranscriber::load(selection)?;
     let input = match device {
         Some(name) => AudioInput::open_matching(name)?,
-        None => AudioInput::open(&[])?,
+        None => AudioInput::open_system_default()?,
     };
     let sample_rate = input.sample_rate;
     let device_name = input.device_name.clone();

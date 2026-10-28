@@ -964,6 +964,42 @@ pub enum IndicatorPosition {
     Hidden = 2,
 }
 
+/// Which release-service channel a direct install updates from
+/// (`crate::updater`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateChannel {
+    Stable,
+    Dev,
+}
+
+impl UpdateChannel {
+    pub const ALL: [Self; 2] = [Self::Stable, Self::Dev];
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::Dev => "dev",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Stable => "Stable",
+            Self::Dev => "Dev",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default)]
+pub struct UpdateSettings {
+    /// `None` follows the build: the channel it was published on (stamped at
+    /// build time), else `dev` for a dev version, else its install's channel.
+    /// Another channel than the build's is a switch the user confirms.
+    pub channel: Option<UpdateChannel>,
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecordingAudioBehavior {
@@ -1071,6 +1107,10 @@ pub struct CaptureSettings {
     /// Where a written capture is sent among OpenCode sessions: Scrawl's
     /// router settings, imported once from Scrawl.
     pub routing: CaptureRouting,
+    /// Lets screen recordings, Hex's own captures included, show Hex's
+    /// overlays: the capture capsule, picker, and ink, the dictation HUD,
+    /// and the meeting capsules. Off keeps them out (`capture_host`).
+    pub show_overlays_in_recordings: bool,
 }
 
 #[cfg(hex_capture)]
@@ -1086,6 +1126,7 @@ impl Default for CaptureSettings {
             media_days: week.media_days,
             bundle_days: week.bundle_days,
             routing: CaptureRouting::default(),
+            show_overlays_in_recordings: false,
         }
     }
 }
@@ -1240,6 +1281,7 @@ pub struct AppSettings {
     /// The interface language code; `None` follows the system language.
     pub ui_language: Option<String>,
     pub indicator_position: IndicatorPosition,
+    pub updates: UpdateSettings,
     /// The shared vocabulary (`crate::vocabulary`). Left out of the file
     /// while empty, so settings without one stay as they were.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -1312,6 +1354,7 @@ impl Default for AppSettings {
             paste_with_shift: false,
             ui_language: None,
             indicator_position: IndicatorPosition::default(),
+            updates: UpdateSettings::default(),
             vocabulary: Vec::new(),
             migrations: MIGRATIONS.iter().map(|id| id.to_string()).collect(),
             text_replacements: Vec::new(),
@@ -1572,6 +1615,18 @@ impl AppSettings {
         }
     }
 
+    /// The saved `updates.channel`, read without loading, normalizing, or
+    /// writing anything else, so the updater thread never races a save.
+    pub fn saved_update_channel() -> Option<UpdateChannel> {
+        #[derive(Deserialize)]
+        struct File {
+            #[serde(default)]
+            updates: UpdateSettings,
+        }
+        let data = fs::read(path().ok()?).ok()?;
+        serde_json::from_slice::<File>(&data).ok()?.updates.channel
+    }
+
     pub(crate) fn load_from(path: &std::path::Path) -> Result<Self> {
         match fs::read(path) {
             Ok(data) => {
@@ -1653,6 +1708,7 @@ impl AppSettings {
                 .write()
                 .unwrap_or_else(|error| error.into_inner()) = self.capture.clone();
             CAPTURE_ON.store(self.capture_on(), Ordering::Release);
+            crate::capture_host::record_own_windows(self.capture.show_overlays_in_recordings);
         }
         HEX_MICROPHONE_ENABLED.store(self.experimental.hex_microphone, Ordering::Release);
         crate::hex_microphone::sync_from_settings(
@@ -2187,7 +2243,7 @@ pub(crate) fn publish_list_keycaps(binding: Option<&HotkeyBinding>) {
 }
 
 /// The send-to list shortcut's keycaps (`["⌥", "⇧", "V"]`) for the
-/// capsule's Elsewhere chip; empty while the list has no shortcut
+/// capsule's ask chip and footer hint; empty while the list has no shortcut
 /// ([`AppSettings::capture_list_hotkey`]), and the default's before settings
 /// are applied (scenes and tests).
 #[cfg(hex_capture)]
@@ -2353,7 +2409,7 @@ pub(crate) fn migrate_legacy_settings(path: &std::path::Path) -> Result<()> {
 mod tests {
     use super::*;
 
-    /// The capsule's Elsewhere chip shows the send-to list's own shortcut,
+    /// The capsule's ask chip and footer hint show the send-to list's own shortcut,
     /// ⌥⇧V unless rebound, and no keys while the list has none.
     #[cfg(hex_capture)]
     #[test]
@@ -2381,10 +2437,7 @@ mod tests {
             ..RuntimeHotkeys::default()
         };
         assert_eq!(runtime_hotkeys().capture_list, None);
-        let grab = crate::capture_host::take_keys(
-            crate::capture_host::CapsuleKeys::Route { escape: false },
-            |_| {},
-        );
+        let grab = crate::capture_host::take_keys(crate::capture_host::CapsuleKeys::Route, |_| {});
         assert_eq!(runtime_hotkeys().capture_list, Some(list));
         grab.set(crate::capture_host::CapsuleKeys::Picker);
         assert_eq!(runtime_hotkeys().capture_list, None);
@@ -2909,6 +2962,20 @@ mod tests {
         let serialized = serde_json::to_value(settings).unwrap();
 
         assert!(serialized.get("prevent_system_sleep").is_none());
+    }
+
+    #[test]
+    fn an_unset_microphone_is_system_default_and_a_saved_one_is_kept() {
+        let automatic: AppSettings = serde_json::from_str(r#"{"microphone":null}"#).unwrap();
+        assert_eq!(automatic.microphone, None);
+        let absent: AppSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(absent.microphone, None);
+        let saved: AppSettings =
+            serde_json::from_str(r#"{"microphone":"Studio Display Microphone"}"#).unwrap();
+        assert_eq!(
+            saved.microphone.as_deref(),
+            Some("Studio Display Microphone")
+        );
     }
 
     #[test]

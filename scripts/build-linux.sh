@@ -6,7 +6,7 @@ set -eu
 
 script_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 root=${HEX_RELEASE_SOURCE:-$script_root}
-version=${HEX_VERSION:-$(cargo metadata --no-deps --format-version 1 --manifest-path "$root/Cargo.toml" | jq -r '.packages[0].version')}
+version=${HEX_VERSION:-$(cargo metadata --no-deps --format-version 1 --manifest-path "$root/Cargo.toml" | jq -r '.packages[] | select(.name == "voice-control") | .version')}
 dist=${HEX_RELEASE_DIST:-"$root/dist"}
 target_dir=${CARGO_TARGET_DIR:-"$root/target"}
 
@@ -20,7 +20,7 @@ if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
   echo "Linux releases must be built on x86_64 Linux." >&2
   exit 1
 fi
-if ! printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-(beta|dev)\.[0-9]+)?$'; then
+if ! printf '%s\n' "$version" | grep -Eq '^([0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?|0\.0\.0-dev-[0-9]+)$'; then
   echo "Release builds need a version like 2.4.0, 2.5.0-beta.1, or 2.5.0-dev.3, not $version." >&2
   exit 1
 fi

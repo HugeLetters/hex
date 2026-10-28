@@ -39,7 +39,7 @@ use self::flow::{Action, Cue, Done, Flow, Footer, Input, Lead, List, Mode, Pres}
 use self::surface::{
     CHIP_H, CHIP_PX, DONE_TEXT_X, HEADER_H, Id, KEYCAP_GAP, LEAD_TEXT_X, LIST_PAD, LIST_Y, MEDIUM,
     PANEL_H, PANEL_W, PROCESSING, PROCESSING_TEXT_X, ROW_H, SEG_ICON, SEG_ICON_GAP, SMALL, STRONG,
-    Shown, Surface, TIMER, UNDO_KEYS, UNDO_LABEL, clock_width, ellipsize, keycaps_width, measure,
+    Shown, Surface, TIMER, UNDO_LABEL, clock_width, ellipsize, keycaps_width, measure,
 };
 use super::controls::{Paint, keycaps};
 
@@ -57,8 +57,6 @@ pub(crate) const FOOTER_H: f32 = surface::FOOTER_H;
 const FOOTER_GAP: f32 = 24.0;
 /// rune-kit's checkbox.
 const CHECKBOX: f32 = 16.0;
-/// "Elsewhere…"'s hover inset.
-const ELSEWHERE_PX: f32 = 6.0;
 /// The list slides down this far as it fades in.
 const LIST_DROP: f32 = 6.0;
 const LIST_MOVE: rune::Spring = rune::Spring::new(0.32, 0.0);
@@ -533,7 +531,7 @@ fn poll(s: &mut CapsuleState, now: f64, tx: &mut Tx) -> bool {
             overlay.set_follow_pointer(follow);
         }
     }
-    take_keys(s, now);
+    take_keys(s);
     // The on-screen picker shows what the capsule picks.
     let picking = match s.surface.pres {
         Pres::Selecting { mode, .. } => Some(mode),
@@ -558,8 +556,8 @@ fn poll(s: &mut CapsuleState, now: f64, tx: &mut Tx) -> bool {
 }
 
 /// Takes, changes, or lets go of the keys the capsule wants from Hex's tap.
-fn take_keys(s: &mut CapsuleState, now: f64) {
-    let wanted = s.flow.keys(now);
+fn take_keys(s: &mut CapsuleState) {
+    let wanted = s.flow.keys();
     match (wanted, &mut s.keys) {
         (None, held) => *held = None,
         (Some(keys), Some((held, grab))) => {
@@ -632,7 +630,7 @@ impl CaptureCapsule {
                 }),
                 display: DisplayTarget::UnderPointer,
                 level: OverlayLevel::AboveOverlays,
-                exclude_from_capture: true,
+                exclude_from_capture: !crate::capture_host::own_windows_recorded(),
                 input: OverlayInput::Regions,
                 prewarm: true,
                 ..Default::default()
@@ -664,6 +662,11 @@ impl CaptureCapsule {
             s.picker = Some(picker);
             tx.wake_after(Duration::ZERO);
         });
+    }
+
+    /// Lets screen recordings see the capsule, or keeps it out.
+    pub(crate) fn show_in_recordings(&self, shown: bool) {
+        self.overlay.set_exclude_from_capture(!shown);
     }
 
     /// Moves the capsule; safe from any thread.
@@ -946,19 +949,7 @@ fn item(p: Paint, surface: &Surface, live: &Animated, shown: &Shown) -> El {
             .trace_name("why")
             .child(label(shown.text(), SMALL, p.faint())),
         // The quiet way out of a send that just went.
-        Id::Undo => {
-            let keys: Vec<String> = UNDO_KEYS.iter().map(|k| (*k).to_owned()).collect();
-            base.radius(CHIP_H * 0.5)
-                .gap(KEYCAP_GAP)
-                .hover(c.hover)
-                .press(c.pressed)
-                .child(keycaps(p, "keys", &keys).w(keycaps_width(UNDO_KEYS)))
-                .child(label(UNDO_LABEL, MEDIUM, p.muted()))
-                .role("button")
-                .label("Undo")
-                .hit()
-                .on_press_tx(press(id))
-        }
+        Id::Undo => keyed(p, base, &[], UNDO_LABEL, MEDIUM).on_press_tx(press(id)),
         // The first says what it does and carries a faint fill, as
         // Scrawl's does; the rest are names beside it.
         Id::Route(index) => {
@@ -1016,7 +1007,7 @@ fn item(p: Paint, surface: &Surface, live: &Animated, shown: &Shown) -> El {
             field(p, base, typed)
         }
         // Rows live in the list, never in the capsule.
-        Id::Row(_) | Id::Always | Id::Elsewhere => base,
+        Id::Row(_) | Id::Always => base,
     }
 }
 
@@ -1282,7 +1273,7 @@ fn list_view(p: Paint, list: &List, x: f32, w: f32, reduced: bool) -> El {
         Footer::KeepCopied => (&["esc"], "Keep copied".to_owned()),
         Footer::Keep(to) => (&["esc"], format!("Keep {to}")),
         Footer::Always(site) => (&["⇧", "⏎"], format!("Always for {site}")),
-        Footer::Elsewhere => (&["esc"], "Keep copied".to_owned()),
+        Footer::Suggesting => (&["esc"], "Keep copied".to_owned()),
     };
     let used = keycaps_width(&["⏎"]) + 5.0 + measure(&send, SMALL) + FOOTER_GAP;
     let second = ellipsize(&second, SMALL, room - used - keycaps_width(keys) - 5.0);
@@ -1315,8 +1306,8 @@ fn list_view(p: Paint, list: &List, x: f32, w: f32, reduced: bool) -> El {
     list_panel(p, body, x, w, h, blur)
 }
 
-/// The suggestions' footer: the digits that send, and the list shortcut's
-/// search of every session.
+/// The suggestions' footer: the digits that send, and a hint that the list
+/// shortcut searches every session.
 fn suggest_footer(p: Paint, list: &List, w: f32) -> El {
     let rows = list.rows().count();
     let digits = if rows > 1 {
@@ -1326,16 +1317,16 @@ fn suggest_footer(p: Paint, list: &List, w: f32) -> El {
     };
     let list_keys = surface::ask_keys();
     let room = w - 2.0 * LIST_PAD - 2.0 * ROW_PX;
-    let elsewhere_w = 2.0 * ELSEWHERE_PX
-        + measure("Elsewhere…", SMALL)
-        + if list_keys.is_empty() {
-            0.0
-        } else {
-            keycaps_width(&list_keys.iter().map(String::as_str).collect::<Vec<_>>()) + 5.0
-        };
+    let search_w = if list_keys.is_empty() {
+        0.0
+    } else {
+        keycaps_width(&list_keys.iter().map(String::as_str).collect::<Vec<_>>())
+            + 5.0
+            + measure("Search", SMALL)
+    };
     // "Send" goes before anything is cut.
     let say_send =
-        keycaps_width(&[digits.as_str()]) + 5.0 + measure("Send", SMALL) + FOOTER_GAP + elsewhere_w
+        keycaps_width(&[digits.as_str()]) + 5.0 + measure("Send", SMALL) + FOOTER_GAP + search_w
             <= room;
     let mut send = row()
         .key("send")
@@ -1345,24 +1336,23 @@ fn suggest_footer(p: Paint, list: &List, w: f32) -> El {
     if say_send {
         send = send.child(label("Send", SMALL, p.faint()));
     }
-    let mut elsewhere = row()
-        .key("elsewhere")
+    let mut footer = row()
+        .key("footer")
         .center_y()
-        .gap(5.0)
-        .h(FOOTER_H - 6.0)
-        .px(ELSEWHERE_PX)
-        .radius(ROW_RADIUS)
-        .hover(p.k.c.hover)
-        .press(p.k.c.pressed);
+        .h(FOOTER_H)
+        .px(ROW_PX)
+        .child(send)
+        .child(el().grow(1.0));
     if !list_keys.is_empty() {
-        elsewhere = elsewhere.child(keycaps(p, "keys", &list_keys));
+        footer = footer.child(
+            row()
+                .key("search")
+                .center_y()
+                .gap(5.0)
+                .child(keycaps(p, "keys", &list_keys))
+                .child(label("Search", SMALL, p.faint())),
+        );
     }
-    let elsewhere = elsewhere
-        .child(label("Elsewhere…", SMALL, p.muted()))
-        .role("button")
-        .label("Elsewhere…")
-        .hit()
-        .on_press_tx(press(Id::Elsewhere));
     col()
         .w(w - 2.0 * LIST_PAD)
         .child(
@@ -1372,17 +1362,7 @@ fn suggest_footer(p: Paint, list: &List, w: f32) -> El {
                 .mt(LIST_PAD)
                 .fill(p.k.c.border_base),
         )
-        .child(
-            row()
-                .key("footer")
-                .center_y()
-                .h(FOOTER_H)
-                .pl(ROW_PX)
-                .pr(ROW_PX - ELSEWHERE_PX)
-                .child(send)
-                .child(el().grow(1.0))
-                .child(elsewhere),
-        )
+        .child(footer)
 }
 
 fn list_panel(p: Paint, body: El, x: f32, w: f32, h: f32, blur: f32) -> El {

@@ -36,8 +36,15 @@ Settings › Experiments › Scrawl          // capture.pane
 ├── Send-to list (capture.list_hotkey, default ⌥⇧V) -> the capsule's list; a key
 │   is required, refused on overlap like the shortcut. Paste Last defaults to
 │   ⌥⇧V too, so turning captures on is refused until one of them is rebound
-├── Screen Recording -> Allow asks macOS once, then opens its System Settings list;
-│   never part of onboarding (macOS also asks at the first capture)
+├── Screen Recording -> read (preflight, never a prompt) once a second and again
+│   when the pane opens or the window becomes key; granted -> Allowed, no button
+│   └── Allow -> rechecks, then the onboarding permission guide over System
+│       Settings' list (PermissionKind::ScreenRecording), as for Input
+│       Monitoring; flips to Allowed on the next read. Never part of onboarding
+│       (macOS also asks at the first capture). Check: rune_ui::scrawl tests
+├── Show in screen recordings (capture.show_overlays_in_recordings, default
+│   off; also the menu bar's Show Hex in Screen Recordings checkmark) -> see
+│   capture.own-windows; applies at once, to open windows and a recording capture
 ├── Transcriber (capture.transcriber) -> Parakeet (default) | Apple
 ├── Captures folder (capture.folder, default Scrawl's) -> Reveal | choose another
 ├── Keep (capture.media_days / bundle_days) -> Scrawl's presets, or imported days
@@ -67,6 +74,21 @@ First launch with the experiment on      // capture.import
 │   and Hex's tap lets it through (only a dictation hold under it is cancelled)
 ├── The binding is swallowed, never chord evidence for dictation
 └── Hold the dictation shortcut mid-capture -> dictation pastes as usual
+
+While a capture records                  // capture.quiet
+├── Start -> a recording-environment session with General's While dictating
+│   (read at each start; captures have no setting of their own): mutes output
+│   or pauses Music, Spotify, VLC; Do nothing changes nothing. No idle-sleep
+│   assertion, and it never counts as an intentional dictation
+├── Stop, cancel, discard, failed start, captures off, quit -> released; a
+│   switch carries it to the next capture without restoring in between
+└── Dictation mid-capture -> each effect is held from the first session that
+    wants it to the last, so neither unmutes or resumes what the other still
+    holds; a While dictating change mid-capture composes too (the capture keeps
+    media paused, the dictation mutes). Only what Hex
+    changed is restored. The dictation stop tone plays at once while the capture
+    keeps output muted. Check: recording_environment tests (overlap both ways),
+    capture_host a_capture_stays_quiet_until_it_stops_is_cancelled_or_hex_quits
 
 Switching target                         // capture.switch; the capsule's chips
 ├── Started by the shortcut -> the snapshot's recording says `target: Pointer`,
@@ -153,11 +175,12 @@ The capsule                              // capture.capsule (rune_ui/capture_cap
 │   only the send going (its tone), Queued (then Sent), how an Undo ended,
 │   and a failed send
 │   ├── A rule Kit saved -> the only send that goes by itself, at once, with
-│   │   no countdown: "Sent to X" and the same quiet Undo (esc) for 5 s that a
+│   │   no countdown: "Sent to X" and the same quiet Undo button (click only, no key) for 5 s that a
 │   │   pick gets, no ring or drain; ✕ closes. The Sent tone plays when the
 │   │   router says it went. No runner-up chip, since the router names none
-│   │   beside a saved rule; once the Undo window ends, an "Elsewhere…" chip
-│   │   opens the list. Picking the rule's own session there (without
+│   │   beside a saved rule; when the Undo window ends the capsule leaves by
+│   │   itself (with the list open it stays; the pointer on it holds it, and a
+│   │   folded list gives it a brief hold). Picking the rule's own session there (without
 │   │   "Always") only closes the list; nothing is sent again
 │   ├── The Undo chip counts nothing down: the capsule reads the same for the
 │   │   whole window and wakes once, when it ends
@@ -169,16 +192,17 @@ The capsule                              // capture.capsule (rune_ui/capture_cap
 │   │   ├── "Always send <site> here" (a guess with a site) -> ticked, the pick
 │   │   │   also saves that rule
 │   │   ├── 1-3 or a click -> sends at once: "Sent to X", the Sent tone, and a
-│   │   │   quiet Undo (esc) for the same 5 s, with no ring or drain; ✕ closes
-│   │   ├── The list shortcut or "Elsewhere…" -> the full list with its search field
-│   │   ├── Esc -> folds them to a "Send to…" ask
+│   │   │   quiet Undo button for the same 5 s, with no ring or drain; ✕ closes;
+│   │   │   the capsule then leaves by itself with its exit
+│   │   ├── The list shortcut -> the full list with its search field
+│   │   ├── Esc -> not Hex's here: it goes to the app in front
 │   │   └── Unpicked -> they leave with the capsule after the done hold
 │   ├── Taken back (a rule's send or a pick) -> never
 │   │   ends the capture: the list opens again with the same sessions, the one
 │   │   it went to (by session id) once, last of all ("taken back"), with 1-9,
 │   │   typing, and ⇧⏎ as before. Open, it stays, sent nowhere; a click away
-│   │   folds it to "Taken back" with "Elsewhere…", gives Esc back to the app,
-│   │   and it leaves after the done hold. Esc or ✕ dismisses: "Kept ·
+│   │   folds it to "Taken back" with "Send to…", and it leaves after the done
+│   │   hold; nothing here takes Esc. ✕ (or Esc in the typed list) dismisses: "Kept ·
 │   │   hex capture send latest", the bundle untouched. Either way it then
 │   │   waits for the list shortcut, even after the router said the pick went.
 │   │   News of the send being taken back (it went, queued, or failed) leaves
@@ -186,7 +210,7 @@ The capsule                              // capture.capsule (rune_ui/capture_cap
 │   │   stands: the Undo's answer and the earlier send's news never take it back
 │   ├── Too late to take back -> the same list, the session marked "has it",
 │   │   folded "Sent to X · too late to take back"; a pick sends a copy there,
-│   │   and Esc or ✕ just closes. Closed, it doesn't wait for the list shortcut.
+│   │   and ✕ just closes (it leaves by itself after the brief hold). Closed, it doesn't wait for the list shortcut.
 │   │   An Undo OpenCode refuses (an error) reads as too late
 │   ├── Sends -> CaptureCommand::Send{to} and Undo, naming the
 │   │   session by id (`RouteDest.session`), so sessions sharing a title never
@@ -194,21 +218,23 @@ The capsule                              // capture.capsule (rune_ui/capture_cap
 │   ├── Keys (capture_host::take_keys), never taking focus:
 │   │   ├── Picker -> ⌥⇧S and Esc through the listener
 │   │   ├── Routed -> the send-to list shortcut (capture.list_hotkey; the
-│   │   │   "Elsewhere…" chip shows it) opens the list; Esc too while a send
-│   │   │   can be undone or a taken-back list is open.
+│   │   │   "Send to…" chip shows it) opens the list; never Esc, so a send is
+│   │   │   taken back only by clicking Undo.
 │   │   │   Unreachable has no list, so the shortcut reaches the app in front
 │   │   ├── Closed, waiting for a pick (a guess or taken-back capture closed
-│   │   │   by Esc, ✕, or its hold, with nothing sent) -> the list shortcut
+│   │   │   by ✕ or its hold, with nothing sent) -> the list shortcut
 │   │   │   brings the capsule back with its list open, until a pick, Paste,
 │   │   │   Inspect, a send from `hex capture send`, or the next capture
 │   │   ├── Otherwise -> the list shortcut isn't Hex's: runtime_hotkeys has it
 │   │   │   only while the capsule takes it (capture_host::list_key_wanted),
 │   │   │   so suppression passes it through
-│   │   ├── A send from the list still undoable -> Esc only (CapsuleKeys::Undo)
-│   │   ├── Suggestions -> Esc and the list shortcut through the listener,
+│   │   ├── A send from the list still undoable -> no keys; Esc and ⌥⇧V go to the
+│   │   │   app, and the Undo button is the only way back
+│   │   ├── Suggestions -> the list shortcut through the listener,
 │   │   │   and at the session tap only 1 to the number of rows with no
-│   │   │   modifier (`capture_host::suggesting`); every other key goes on to
-│   │   │   the app
+│   │   │   modifier (`capture_host::suggesting`) and a mouse press, which folds
+│   │   │   them (the click still reaches the app); every other key, Esc
+│   │   │   included, goes on to the app
 │   │   └── List open -> the session tap takes every key press without ⌘ or ⌃
 │   │       that isn't a Hex shortcut: text in the active layout, ⌫, ↑↓, ⏎,
 │   │       ⇧⏎ (always), 1-9, Esc; their releases too. A send, Esc, or a
@@ -246,6 +272,14 @@ Hex's own windows                        // capture.own-windows
 ├── Chrome (the capsule, ink, picker, HUDs, meeting capsules: Hex's named
 │   windows and any of its windows above the normal level) -> never recorded,
 │   never in the window log, never the target, clicks on it not logged
+│   ├── Other recorders -> the capsule, picker, and ink are left out
+│   │   (sharingType none); the dictation HUD and meeting capsules show
+│   ├── Show in screen recordings on -> every recorder, Hex's captures
+│   │   included, shows all of it (sharingType readOnly, no SCK exclusions);
+│   │   still never in the window log or the target. Rune's
+│   │   OverlayHandle::set_exclude_from_capture flips open windows, and the
+│   │   sampler rebuilds its filter mid-recording (OwnWindows::recorded)
+│   └── Not proven natively end to end yet
 │   └── Click-through chrome (the full-screen ink overlay, the capsule's
 │       640×424 panel outside its pill) -> clicks there count for the app
 │       beneath; only the pill's (capture_host::set_capsule_pill) are Hex's
@@ -355,7 +389,7 @@ Where it goes                            // capture.route; capture.routing's aut
 │       deadline, down, or refusing); a warning in process.log with the error, and
 │       the capsule reads "Couldn't reach OpenCode" with why ("didn't answer in
 │       time"), keeping Paste and Inspect
-├── An answer for a capsule already closed (dismissed, or past its 25 s hold)
+├── An answer for a capsule already closed (dismissed, or past its hold)
 │   leaves it closed; `hex capture list` and `send` still offer the capture
 ├── The capsule's commands act only on `last`, the newest routed capture:
 │   ├── Send{to} -> the Rule's own session, already sent, does nothing; any
@@ -367,7 +401,9 @@ Where it goes                            // capture.route; capture.routing's aut
 │   send straight there
 ├── Queued sends -> retried every 15 s, unless Scrawl.app runs or something
 │   serves the ingest port (that process retries); a retried send can't be
-│   undone, so its "Sent to X" has no Undo
+│   undone, so its "Sent to X" has no Undo. A queued or too-late-to-undo send
+│   leaves after the brief hold (4 s) rather than the 25 s done hold; a taken
+│   back capture with nothing to list ('Taken back') does too
 └── autoSend off -> no look, no route; the capture is only copied
 
 hex capture list|show|send|route         // capture.cli; docs/cli.md
@@ -536,7 +572,7 @@ Checks:
   "Copy values" copies its `DEFAULT`). It reads and writes no Hex data and
   records or sends nothing. The whole flow picks the first suggestion;
   its "Saved rule" toggle plays a rule's send, sent at once, instead.
-  `--snap --scene suggestions|always|elsewhere|picked|rule|recording`
+  `--snap --scene suggestions|always|search|picked|rule|recording`
   renders it. The tones were checked by waveform and level only, never on
   speakers.
 - Picker, in capture_capsule/picker.rs and tests.rs: geometry, label, and

@@ -309,12 +309,15 @@ fn show_update_in_tray(status: DesktopUpdateStatus) {
     TRAY.with(|slot| {
         let mut slot = slot.borrow_mut();
         let Some(tray) = slot.as_mut() else { return };
-        let label = match status {
-            DesktopUpdateStatus::ReadyToRestart => Some(tr("Restart to update")),
-            DesktopUpdateStatus::Available => Some(tr("Download update")),
+        let label = match &status {
+            DesktopUpdateStatus::ReadyToRestart => Some(tr("Restart to update").to_owned()),
+            DesktopUpdateStatus::Available => Some(tr("Download update").to_owned()),
+            DesktopUpdateStatus::SwitchAvailable { channel, version } => {
+                Some(crate::updater::switch_label(channel, version))
+            }
             _ => None,
         };
-        if let Some(label) = label {
+        if let Some(label) = &label {
             tray.update.set_text(label);
         }
         let shown = match (label.is_some(), tray.update_shown) {
@@ -386,6 +389,9 @@ fn create_tray(window: rune::AppHandle<Ui>) -> Result<Tray> {
             {
                 Some(DesktopUpdateStatus::ReadyToRestart) => DesktopAction::RestartIntoUpdate,
                 Some(DesktopUpdateStatus::Available) => DesktopAction::OpenUpdate,
+                Some(DesktopUpdateStatus::SwitchAvailable { .. }) => {
+                    DesktopAction::ConfirmUpdateSwitch
+                }
                 _ => return,
             };
             let _ = runtime.send(Request::Desktop(action));

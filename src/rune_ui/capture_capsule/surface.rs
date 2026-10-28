@@ -64,7 +64,6 @@ pub(crate) const STRONG: TextStyle = TextStyle::new(13.0, 600.0);
 pub(crate) const TIMER: TextStyle = STRONG.features("'tnum' 1");
 pub(crate) const SMALL: TextStyle = TextStyle::new(11.5, 530.0);
 pub(crate) const PROCESSING: &str = "Processing…";
-pub(crate) const UNDO_KEYS: &[&str] = &["esc"];
 
 /// The Ask chip's keycaps: the send-to list's shortcut
 /// (`capture.list_hotkey`); none while it has none.
@@ -149,9 +148,6 @@ pub(crate) enum Id {
     Row(usize),
     /// The suggestions' "Always send <site> here".
     Always,
-    /// The suggestions' "Elsewhere…": the send-to list shortcut searches
-    /// every session.
-    Elsewhere,
 }
 
 impl Id {
@@ -183,7 +179,6 @@ impl Id {
             Id::Field => "field",
             Id::Row(_) => "row",
             Id::Always => "always",
-            Id::Elsewhere => "elsewhere",
         }
     }
 
@@ -217,7 +212,7 @@ impl Id {
             Id::Ask => 18,
             Id::Inspect => 19,
             Id::Close => 20,
-            Id::Row(_) | Id::Always | Id::Elsewhere => 21,
+            Id::Row(_) | Id::Always => 21,
         }
     }
 }
@@ -333,7 +328,7 @@ fn done_row(done: &Done, routes: &[String], cap: f32, raw: &mut Vec<(Id, String,
         raw.push((
             Id::Undo,
             String::new(),
-            keyed_width(UNDO_KEYS, UNDO_LABEL, MEDIUM),
+            keyed_width(&[], UNDO_LABEL, MEDIUM),
             false,
         ));
     }
@@ -1016,7 +1011,7 @@ mod tests {
         Pres::Done(Done {
             why: Some("rule".into()),
             undo,
-            ask: Some("Elsewhere…".into()),
+            ask: Some("Send to…".into()),
             ask_keys: ask_keys(),
             ..Done::plain(Lead::Check, "Sent to SEER")
         })
@@ -1094,10 +1089,10 @@ mod tests {
     fn the_undo_chip_is_as_wide_as_its_label_is_drawn() {
         let (_, items) = layout(&ruled(true), "0:00");
         let undo = items.iter().find(|i| i.id == Id::Undo).unwrap();
-        assert_eq!(undo.rect[2], keyed_width(UNDO_KEYS, UNDO_LABEL, MEDIUM));
+        assert_eq!(undo.rect[2], keyed_width(&[], UNDO_LABEL, MEDIUM));
         assert_ne!(
-            keyed_width(UNDO_KEYS, UNDO_LABEL, MEDIUM),
-            keyed_width(UNDO_KEYS, UNDO_LABEL, STRONG)
+            keyed_width(&[], UNDO_LABEL, MEDIUM),
+            keyed_width(&[], UNDO_LABEL, STRONG)
         );
     }
 

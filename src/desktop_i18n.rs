@@ -268,7 +268,6 @@ const TRANSLATIONS: &[(&str, [&str; 5])] = &[
     ("Use Hex for captures", ["Nagrywaj w Hex", "改用 Hex 捕获", "キャプチャに Hex を使う", "Hex für Aufnahmen nutzen", "Usar Hex para capturas"]),
     #[cfg(hex_capture)]
     ("Press to start and again to stop; Esc cancels", ["Naciśnij, aby zacząć, i ponownie, aby zakończyć; Esc anuluje", "按一次开始，再按一次停止；Esc 取消", "押すと開始、もう一度押すと停止。Esc でキャンセル", "Drücken zum Starten, erneut zum Beenden; Esc bricht ab", "Pulsa para empezar y otra vez para parar; Esc cancela"]),
-    #[cfg(hex_capture)]
     ("Send-to list", ["Lista wysyłania", "发送到列表", "送信先リスト", "Senden-an-Liste", "Lista de envío"]),
     #[cfg(hex_capture)]
     ("Opens the list of sessions while a capture is showing or waiting to be sent", ["Otwiera listę sesji, gdy nagranie jest widoczne lub czeka na wysłanie", "在捕获显示或等待发送时打开会话列表", "キャプチャが表示中または送信待ちのときにセッション一覧を開きます", "Öffnet die Liste der Sitzungen, solange eine Aufnahme angezeigt wird oder auf das Senden wartet", "Abre la lista de sesiones mientras una captura se muestra o espera a enviarse"]),
@@ -276,12 +275,14 @@ const TRANSLATIONS: &[(&str, [&str; 5])] = &[
     ("The send-to list shortcut is already in use. Change it below before turning captures on.", ["Skrót listy wysyłania jest już używany. Zmień go poniżej, zanim włączysz nagrywanie.", "发送到列表的快捷键已被占用。请先在下方更改，再开启捕获。", "送信先リストのショートカットはすでに使われています。オンにする前に下で変更してください。", "Das Kürzel für die Senden-an-Liste wird bereits verwendet. Ändere es unten, bevor du Aufnahmen einschaltest.", "El atajo de la lista de envío ya está en uso. Cámbialo abajo antes de activar las capturas."]),
     #[cfg(hex_capture)]
     ("Saved for when captures are on", ["Zapisany na czas, gdy nagrywanie będzie włączone", "保存，供开启捕获后使用", "キャプチャをオンにしたときのために保存されます", "Gespeichert für eingeschaltete Aufnahmen", "Guardado para cuando actives las capturas"]),
-    #[cfg(hex_capture)]
     ("Screen Recording", ["Nagrywanie ekranu", "屏幕录制", "画面収録", "Bildschirmaufnahme", "Grabación de pantalla"]),
-    #[cfg(hex_capture)]
     ("Lets a capture record your screen", ["Pozwala nagrywać ekran", "允许捕获录制你的屏幕", "キャプチャで画面を記録できます", "Erlaubt Aufnahmen deines Bildschirms", "Permite que una captura grabe tu pantalla"]),
     #[cfg(hex_capture)]
     ("Required to record your screen. macOS asks at your first capture, or allow it here.", ["Wymagane do nagrywania ekranu. macOS zapyta przy pierwszym nagraniu albo zezwól tutaj.", "录制屏幕所必需。macOS 会在首次捕获时询问，也可以在这里允许。", "画面の記録に必要です。最初のキャプチャ時に macOS が確認します。ここで許可することもできます。", "Nötig, um deinen Bildschirm aufzunehmen. macOS fragt bei der ersten Aufnahme, oder erlaube es hier.", "Necesario para grabar tu pantalla. macOS lo pide en la primera captura, o permítelo aquí."]),
+    #[cfg(hex_capture)]
+    ("Show in screen recordings", ["Pokazuj w nagraniach ekranu", "在屏幕录制中显示", "画面収録に表示", "In Bildschirmaufnahmen zeigen", "Mostrar en grabaciones de pantalla"]),
+    #[cfg(hex_capture)]
+    ("Lets recordings, captures included, show Hex's capsule, ink, and HUD, for demos", ["Pozwala nagraniom, także nagraniom Hex, pokazywać kapsułę, rysunki i wskaźnik Hex, na potrzeby pokazów", "让录屏（包括捕获）显示 Hex 的胶囊、标注和 HUD，便于演示", "キャプチャを含む画面収録に Hex のカプセル、インク、HUD を映します（デモ用）", "Lässt Aufnahmen, auch Hex-Aufnahmen, Hex' Kapsel, Zeichnungen und HUD zeigen, für Demos", "Deja que las grabaciones, capturas incluidas, muestren la cápsula, la tinta y el HUD de Hex, para demos"]),
     #[cfg(hex_capture)]
     ("Transcriber", ["Transkrypcja", "转写引擎", "文字起こし", "Transkription", "Transcriptor"]),
     #[cfg(hex_capture)]
@@ -422,7 +423,11 @@ const TRANSLATIONS: &[(&str, [&str; 5])] = &[
     ("Bottom", ["Dół", "底部", "下", "Unten", "Abajo"]),
     ("Off", ["Wył.", "关", "オフ", "Aus", "No"]),
     ("Disabled", ["Wyłączone", "已禁用", "無効", "Deaktiviert", "Desactivado"]),
-    ("Automatic", ["Automatyczny", "自动", "自動", "Automatisch", "Automático"]),
+    ("System default", ["Domyślny systemowy", "系统默认", "システムのデフォルト", "Systemstandard", "Predeterminado del sistema"]),
+    ("Hex Microphone is the system default, so Hex listens to {}", ["Hex Microphone jest domyślny w systemie, więc Hex słucha przez {}", "Hex Microphone 是系统默认设备，因此 Hex 使用 {}", "Hex Microphone がシステムのデフォルトのため、Hex は {} を使います", "Hex Microphone ist der Systemstandard, daher nutzt Hex {}", "Hex Microphone es el predeterminado del sistema, así que Hex usa {}"]),
+    ("not connected", ["niepodłączony", "未连接", "未接続", "nicht verbunden", "no conectado"]),
+    ("{} isn't connected; using your Mac's input", ["{} nie jest podłączony; używany jest mikrofon Maca", "{} 未连接；正在使用 Mac 的输入设备", "{} は接続されていません。Mac の入力を使用中", "{} ist nicht verbunden; der Eingang des Mac wird verwendet", "{} no está conectado; se usa la entrada del Mac"]),
+    ("{} isn't connected; using the system input", ["{} nie jest podłączony; używane jest wejście systemowe", "{} 未连接；正在使用系统输入设备", "{} は接続されていません。システムの入力を使用中", "{} ist nicht verbunden; der Systemeingang wird verwendet", "{} no está conectado; se usa la entrada del sistema"]),
     ("24 hours", ["24 godziny", "24 小时", "24 時間", "24 Stunden", "24 horas"]),
     ("7 days", ["7 dni", "7 天", "7 日間", "7 Tage", "7 días"]),
     ("30 days", ["30 dni", "30 天", "30 日間", "30 Tage", "30 días"]),
@@ -540,6 +545,7 @@ const TRANSLATIONS: &[(&str, [&str; 5])] = &[
     ("Release the microphone when idle?", ["Zwalniać mikrofon w bezczynności?", "空闲时释放麦克风？", "待機中はマイクを解放しますか？", "Mikrofon im Leerlauf freigeben?", "¿Liberar el micrófono en reposo?"]),
     ("Release when idle", ["Zwalniaj w bezczynności", "空闲时释放", "待機中は解放", "Im Leerlauf freigeben", "Liberar en reposo"]),
     ("Replacement (e.g. OpenCode)", ["Zamiennik (np. OpenCode)", "替换为（例如 OpenCode）", "置換後（例: OpenCode）", "Ersetzung (z. B. OpenCode)", "Reemplazo (p. ej. OpenCode)"]),
+    ("Switch to {channel} {version}", ["Przełącz na {channel} {version}", "切换到{channel} {version}", "{channel} {version} に切り替え", "Zu {channel} {version} wechseln", "Cambiar a {channel} {version}"]),
     ("Restart to update", ["Uruchom ponownie, aby zaktualizować", "重启以更新", "再起動してアップデート", "Zum Aktualisieren neu starten", "Reiniciar para actualizar"]),
     ("Retry", ["Ponów", "重试", "再試行", "Erneut versuchen", "Reintentar"]),
     ("Retry setup", ["Ponów konfigurację", "重试设置", "セットアップを再試行", "Einrichtung wiederholen", "Reintentar configuración"]),
@@ -554,6 +560,9 @@ const TRANSLATIONS: &[(&str, [&str; 5])] = &[
     ("Set up", ["Skonfiguruj", "设置", "セットアップ", "Einrichten", "Configurar"]),
     ("Shortcut mode", ["Tryb skrótu", "快捷键模式", "ショートカットモード", "Kürzelmodus", "Modo del atajo"]),
     ("Show Dock icon", ["Pokaż ikonę w Docku", "显示程序坞图标", "Dock にアイコンを表示", "Dock-Symbol anzeigen", "Mostrar icono en el Dock"]),
+    ("Update channel", ["Kanał aktualizacji", "更新渠道", "アップデートチャンネル", "Update-Kanal", "Canal de actualizaciones"]),
+    ("Stable", ["Stabilny", "稳定版", "安定版", "Stabil", "Estable"]),
+    ("Dev", ["Deweloperski", "开发版", "開発版", "Entwicklung", "Desarrollo"]),
     ("Sound volume", ["Głośność dźwięków", "提示音音量", "効果音の音量", "Lautstärke der Töne", "Volumen de sonidos"]),
     ("Spoken phrase (e.g. open code)", ["Wypowiadana fraza (np. open code)", "说出的短语（例如 open code）", "話すフレーズ（例: open code）", "Gesprochene Phrase (z. B. open code)", "Frase hablada (p. ej. open code)"]),
     ("Start Hex when you log in", ["Uruchamiaj Hex po zalogowaniu", "登录时启动 Hex", "ログイン時に Hex を起動", "Hex beim Anmelden starten", "Iniciar Hex al iniciar sesión"]),

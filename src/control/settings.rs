@@ -129,7 +129,7 @@ const KEYS: &[Key] = &[
     optional(
         "microphone",
         Kind::Text,
-        "Preferred microphone by name; none picks one automatically",
+        "Microphone by name; system-default (or none) follows the system's default input",
     ),
     key(
         "recording_audio_behavior",
@@ -330,6 +330,11 @@ const KEYS: &[Key] = &[
         Kind::Choice(&["top", "bottom", "hidden"]),
         "Where the dictation HUD appears",
     ),
+    optional(
+        "updates.channel",
+        Kind::Choice(&["stable", "dev"]),
+        "Update channel; none follows the build (dev builds use dev, others stable)",
+    ),
 ];
 
 /// Captures exist only in builds with the `capture` build option.
@@ -376,6 +381,11 @@ const CAPTURE_KEYS: &[Key] = &[
         Kind::Json,
         "Where captures go among OpenCode sessions: Scrawl's router settings (autoSend, sites, apps, smartRouting, …) as a JSON object",
     ),
+    key(
+        "capture.show_overlays_in_recordings",
+        Kind::Bool,
+        "Let screen recordings, captures included, show Hex's capsules, ink, and HUD (for demos)",
+    ),
 ];
 #[cfg(hex_capture)]
 const RETENTION_DAYS: Kind = Kind::Integer { min: 1, max: 3650 };
@@ -407,6 +417,8 @@ pub struct ShortcutRules {
 pub enum Effect {
     HistoryRetention(crate::history::HistoryRetention),
     DockIcon,
+    /// Check the newly chosen channel now rather than within the hour.
+    CheckForUpdates,
 }
 
 /// A validated change, ready to save.
@@ -655,6 +667,7 @@ pub fn apply(
         }
         "history_retention" => effects.push(Effect::HistoryRetention(candidate.history_retention)),
         "show_dock_icon" => effects.push(Effect::DockIcon),
+        "updates.channel" => effects.push(Effect::CheckForUpdates),
         _ => {}
     }
     Ok(Change {
@@ -675,6 +688,9 @@ fn parse(key: &Key, raw: &str, shortcuts: &ShortcutRules) -> Result<Value, Contr
     let name = key.key;
     let trimmed = raw.trim();
     if key.optional && matches!(trimmed.to_ascii_lowercase().as_str(), "none" | "null" | "") {
+        return Ok(Value::Null);
+    }
+    if name == "microphone" && trimmed.eq_ignore_ascii_case("system-default") {
         return Ok(Value::Null);
     }
     match key.kind {
@@ -1067,6 +1083,10 @@ mod tests {
         assert_eq!(change.settings.meetings.calendar.lead_minutes, 5);
         let change = apply(&settings, "ui_language", "none", false, &rules()).unwrap();
         assert_eq!(change.settings.ui_language, None);
+        let mut saved = settings.clone();
+        saved.microphone = Some("USB Mic".into());
+        let change = apply(&saved, "microphone", "system-default", false, &rules()).unwrap();
+        assert_eq!(change.settings.microphone, None);
         let change = apply(&settings, "history_retention", "month", false, &rules()).unwrap();
         assert_eq!(
             change.effects,

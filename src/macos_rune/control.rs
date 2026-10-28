@@ -450,6 +450,9 @@ impl Pump {
                     );
                 }
                 settings::Effect::DockIcon => {}
+                settings::Effect::CheckForUpdates => {
+                    let _ = crate::macos_rune::update_action(&DesktopAction::CheckForUpdates);
+                }
             }
         }
         Ok(ControlReply::done(change.message))
@@ -818,6 +821,7 @@ fn status(
             DesktopUpdateStatus::Checking | DesktopUpdateStatus::Downloading => "checking",
             DesktopUpdateStatus::Available
             | DesktopUpdateStatus::ReadyToRestart
+            | DesktopUpdateStatus::SwitchAvailable { .. }
             | DesktopUpdateStatus::PackageUpdate { .. } => "available",
             DesktopUpdateStatus::Unavailable
             | DesktopUpdateStatus::Managed

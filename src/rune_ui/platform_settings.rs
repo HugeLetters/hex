@@ -52,6 +52,11 @@ fn permission_copy(
             tr("Screen & System Audio Recording"),
             tr("Required to hear the other participants."),
         ),
+        PermissionKind::ScreenRecording => (
+            "permission-screen-recording",
+            tr("Screen Recording"),
+            tr("Lets a capture record your screen"),
+        ),
     }
 }
 
@@ -457,6 +462,7 @@ fn calendars_row(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> El {
                 } else {
                     format!("{} · {}", info.title, info.source)
                 },
+                detail: None,
                 selected: calendar.includes(&info.id),
                 choose: Box::new(move |ui: &mut Ui| {
                     let id = id.clone();
