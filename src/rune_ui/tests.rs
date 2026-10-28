@@ -198,17 +198,15 @@ fn choosing_an_update_channel_saves_it_and_checks_now() {
     let mut rt = runtime("portal", true, GOLDEN_SIZE);
     tap(&mut rt, "advanced-toggle");
     assert_eq!(rt.state.settings.updates.channel, None);
-    tap(&mut rt, "update-channel-control/segment1");
-    assert_eq!(
-        rt.state.settings.updates.channel,
-        Some(crate::app_settings::UpdateChannel::Dev)
-    );
+    let (other, segment) = other_update_channel();
+    tap(&mut rt, &segment);
+    assert_eq!(rt.state.settings.updates.channel, Some(other));
     assert_eq!(saved(&rt), 1);
     assert!(matches!(
         sent(&rt),
         [Request::Desktop(DesktopAction::CheckForUpdates)]
     ));
-    tap(&mut rt, "update-channel-control/segment1");
+    tap(&mut rt, &segment);
     assert_eq!(
         saved(&rt),
         1,
@@ -216,12 +214,31 @@ fn choosing_an_update_channel_saves_it_and_checks_now() {
     );
 }
 
+/// The channel this build does not follow, and its segment's id: the build's
+/// own channel depends on its version (a local build follows dev).
+fn other_update_channel() -> (crate::app_settings::UpdateChannel, String) {
+    let build = crate::updater::build_channel();
+    let index = crate::app_settings::UpdateChannel::ALL
+        .iter()
+        .position(|channel| *channel != build)
+        .unwrap();
+    (
+        crate::app_settings::UpdateChannel::ALL[index],
+        format!("update-channel-control/segment{index}"),
+    )
+}
+
 #[test]
 fn choosing_the_channel_in_effect_keeps_following_the_build() {
     let mut rt = runtime("portal", true, GOLDEN_SIZE);
     tap(&mut rt, "advanced-toggle");
     assert_eq!(rt.state.settings.updates.channel, None);
-    tap(&mut rt, "update-channel-control/segment0");
+    let build = crate::updater::build_channel();
+    let index = crate::app_settings::UpdateChannel::ALL
+        .iter()
+        .position(|channel| *channel == build)
+        .unwrap();
+    tap(&mut rt, &format!("update-channel-control/segment{index}"));
     assert_eq!(rt.state.settings.updates.channel, None);
     assert_eq!(saved(&rt), 0);
     assert!(sent(&rt).is_empty());

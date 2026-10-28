@@ -13,7 +13,7 @@ use crate::linux_service::{Activation, Launch, Request};
 use crate::moonshine::Moonshine;
 
 #[derive(Parser)]
-#[command(version, about = "Local, observable voice recognition (Linux beta)")]
+#[command(version = crate::VERSION, about = "Local, observable voice recognition (Linux beta)")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,

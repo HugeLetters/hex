@@ -1900,7 +1900,7 @@ fn write_response(stream: &mut TcpStream, response: HttpResponse) -> std::io::Re
 
 fn current_health() -> HealthResponse {
     HealthResponse {
-        version: env!("CARGO_PKG_VERSION"),
+        version: crate::VERSION,
         api_version: API_VERSION,
     }
 }

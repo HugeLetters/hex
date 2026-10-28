@@ -132,7 +132,7 @@ pub fn switch_label(channel: &str, version: &str) -> String {
 
 /// The Update channel Settings shows when none is saved: this build's own.
 pub fn build_channel() -> UpdateChannel {
-    let home = home_channel(&Method::Unknown, BUILD_CHANNEL, env!("CARGO_PKG_VERSION"));
+    let home = home_channel(&Method::Unknown, BUILD_CHANNEL, crate::VERSION);
     if home == UpdateChannel::Dev.name() {
         UpdateChannel::Dev
     } else {
@@ -475,13 +475,13 @@ fn check(shared: &Shared, method: &Method, cache: &mut transport::ManifestCache)
     // Read each check, so a change from the window or `hex settings` applies
     // at the next one.
     let setting = AppSettings::saved_update_channel();
-    let home = home_channel(method, BUILD_CHANNEL, env!("CARGO_PKG_VERSION"));
+    let home = home_channel(method, BUILD_CHANNEL, crate::VERSION);
     let channel = channel(method, setting, &home);
     *lock(&shared.last) = Some((channel.clone(), std::time::Instant::now()));
     let manifest_url = manifest_url(&channel);
     let manifest = cache.fetch(&manifest_url, &updates)?;
     let install = Install {
-        version: env!("CARGO_PKG_VERSION").into(),
+        version: crate::VERSION.into(),
         target: platform::TARGET.into(),
         distribution: method.distribution().into(),
         rollout_bucket: rollout_bucket(&crate::app_paths::support_dir()?)?,

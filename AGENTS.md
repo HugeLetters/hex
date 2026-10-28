@@ -113,6 +113,9 @@ substitute for source inspection or a second roadmap.
   `local_transcriber`; it recreates the native session around each run (and
   each live stream) so inference scratch stays bounded, and owns chunked
   long-audio transcription.
+- `speech_detector`: the optional Silero voice activity detector, loaded once on
+  the CPU and downloaded in the background, that keeps speechless dictation
+  captures and meeting chunks away from the transcription models.
 - `local_transcriber`: the Linux and Windows GGUF loader, prewarm, whole-clip
   transcription, and stream entry point.
 - `transcription_engine`: the thread that owns the loaded model on every OS and

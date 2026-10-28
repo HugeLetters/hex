@@ -767,7 +767,7 @@ fn status(
     let definition = crate::transcription_models::definition(selection.model);
     let setup = crate::onboarding::status(selection);
     Ok(ControlReply::Status(Box::new(StatusReport {
-        app_version: env!("CARGO_PKG_VERSION").into(),
+        app_version: crate::VERSION.into(),
         pid: std::process::id(),
         memory_footprint_bytes: control::memory_footprint(),
         listener: ListenerReport {
