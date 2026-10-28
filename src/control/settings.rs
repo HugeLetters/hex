@@ -104,7 +104,7 @@ const KEYS: &[Key] = &[
     key(
         "keyboard_model_switching.mappings",
         Kind::Json,
-        "Input-source IDs mapped to installed model IDs; absent sources don't switch (macOS)",
+        "Input-source IDs mapped to a model and language; absent sources don't switch (macOS)",
     ),
     key(
         "commands_enabled",
@@ -627,6 +627,13 @@ pub fn apply(
                  shortcut first",
             ));
         }
+        "keyboard_model_switching.mappings" => {
+            for choice in candidate.keyboard_model_switching.mappings.values() {
+                choice
+                    .validate()
+                    .map_err(|error| invalid(name, &error.to_string()))?;
+            }
+        }
         "transcription.recognition_hints" => {
             let model = crate::transcription_models::definition(candidate.transcription.model);
             if !model.supports_recognition_hints {
@@ -978,7 +985,7 @@ mod tests {
     }
 
     #[test]
-    fn keyboard_model_switching_settings_use_typed_source_to_model_mappings() {
+    fn keyboard_model_switching_settings_map_sources_to_a_model_and_its_language() {
         let settings = apply(
             &AppSettings::default(),
             "keyboard_model_switching.enabled",
@@ -992,7 +999,7 @@ mod tests {
         let change = apply(
             &settings,
             "keyboard_model_switching.mappings",
-            r#"{"com.apple.keylayout.Spanish":"parakeet_v3"}"#,
+            r#"{"com.apple.keylayout.Spanish":{"model":"parakeet_v3","language":"es"}}"#,
             false,
             &rules(),
         )
@@ -1003,18 +1010,29 @@ mod tests {
                 .keyboard_model_switching
                 .mappings
                 .get("com.apple.keylayout.Spanish"),
-            Some(&crate::transcription_models::TranscriptionModelId::ParakeetV3)
+            Some(&crate::app_settings::KeyboardModelChoice {
+                model: crate::transcription_models::TranscriptionModelId::ParakeetV3,
+                language: "es".into(),
+            })
         );
-        assert!(
-            apply(
-                &settings,
-                "keyboard_model_switching.mappings",
-                r#"{"Spanish":"unknown-model"}"#,
-                false,
-                &rules()
-            )
-            .is_err()
-        );
+        for invalid in [
+            r#"{"Spanish":"parakeet_v3"}"#,
+            r#"{"Spanish":{"model":"unknown-model","language":"es"}}"#,
+            r#"{"Japanese":{"model":"parakeet_unified_en","language":"ja"}}"#,
+            r#"{"ABC":{"model":"apple_speech","language":"en"}}"#,
+        ] {
+            assert!(
+                apply(
+                    &settings,
+                    "keyboard_model_switching.mappings",
+                    invalid,
+                    false,
+                    &rules()
+                )
+                .is_err(),
+                "{invalid} was accepted"
+            );
+        }
     }
 
     #[test]

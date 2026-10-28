@@ -665,8 +665,7 @@ fn wait_for_model(
 ) -> Result<ControlReply, ControlError> {
     let name = crate::transcription_models::definition(selection.model).name;
     let matches = |settings: &AppSettings| {
-        settings.transcription.model == selection.model
-            && settings.transcription.language == selection.language
+        super::same_model_and_language(&settings.transcription, &selection)
     };
     if load().is_ok_and(|settings| matches(&settings)) {
         return Ok(ControlReply::unchanged(format!(

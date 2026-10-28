@@ -1,5 +1,7 @@
-//! Main-thread-only TIS observation, independent of keyboard shortcuts.
+//! Main-thread-only TIS observation, independent of keyboard shortcuts. Hex
+//! reads input sources only while keyboard model switching is on.
 
+use std::cell::RefCell;
 use std::ffi::c_void;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,6 +20,7 @@ unsafe extern "C" {
     fn TISGetInputSourceProperty(source: Ref, key: Ref) -> Ref;
     static kTISPropertyInputSourceID: Ref;
     static kTISPropertyLocalizedName: Ref;
+    static kTISPropertyInputSourceLanguages: Ref;
     static kTISPropertyInputSourceCategory: Ref;
     static kTISCategoryKeyboardInputSource: Ref;
     static kTISPropertyInputSourceIsSelectCapable: Ref;
@@ -61,6 +64,21 @@ unsafe fn string_property(source: Ref, key: Ref) -> Option<String> {
     (!value.is_null()).then(|| unsafe { &*value.cast::<CFString>() }.to_string())
 }
 
+unsafe fn languages(source: Ref) -> Vec<String> {
+    // SAFETY: the live TIS source owns this CFArray of CFStrings.
+    unsafe {
+        let array = TISGetInputSourceProperty(source, kTISPropertyInputSourceLanguages);
+        if array.is_null() {
+            return Vec::new();
+        }
+        (0..CFArrayGetCount(array))
+            .map(|index| CFArrayGetValueAtIndex(array, index))
+            .filter(|value| !value.is_null())
+            .map(|value| (*value.cast::<CFString>()).to_string())
+            .collect()
+    }
+}
+
 pub(crate) fn current(_mtm: MainThreadMarker) -> Option<String> {
     // SAFETY: TIS calls run on the UI main thread; the copy is released here.
     unsafe {
@@ -97,7 +115,11 @@ pub(crate) fn enabled(_mtm: MainThreadMarker) -> Vec<InputSource> {
                 string_property(source, kTISPropertyInputSourceID),
                 string_property(source, kTISPropertyLocalizedName),
             ) {
-                result.push(InputSource { id, name });
+                result.push(InputSource {
+                    id,
+                    name,
+                    languages: languages(source),
+                });
             }
         }
         result.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
@@ -108,16 +130,39 @@ pub(crate) fn enabled(_mtm: MainThreadMarker) -> Vec<InputSource> {
 
 /// Distributed notifications only mark dirty; the app's main-loop pump reads TIS.
 /// The marker also keeps this owner on the main thread through teardown.
-pub(crate) struct Watcher {
+struct Watcher {
     dirty: Box<AtomicBool>,
-    _mtm: MainThreadMarker,
+    mtm: MainThreadMarker,
+}
+
+thread_local! {
+    /// Present only while keyboard model switching is on.
+    static WATCHER: RefCell<Option<Watcher>> = const { RefCell::new(None) };
+}
+
+/// Starts or stops observing input-source changes. A new observer reports
+/// the current source once, so the runtime learns it when switching turns on.
+pub(crate) fn observe(mtm: MainThreadMarker, on: bool) {
+    WATCHER.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if on && slot.is_none() {
+            *slot = Some(Watcher::new(mtm));
+        } else if !on {
+            *slot = None;
+        }
+    });
+}
+
+/// The current source when it changed since the last call, if observing.
+pub(crate) fn take_change(_mtm: MainThreadMarker) -> Option<Option<String>> {
+    WATCHER.with(|slot| slot.borrow().as_ref().and_then(Watcher::poll))
 }
 
 impl Watcher {
-    pub(crate) fn new(mtm: MainThreadMarker) -> Self {
+    fn new(mtm: MainThreadMarker) -> Self {
         let watcher = Self {
             dirty: Box::new(AtomicBool::new(true)),
-            _mtm: mtm,
+            mtm,
         };
         // SAFETY: the boxed flag has a stable address and outlives registration.
         // 4 = DeliverImmediately, including when Hex is in the background.
@@ -134,10 +179,10 @@ impl Watcher {
         watcher
     }
 
-    pub(crate) fn poll(&self) -> Option<Option<String>> {
+    fn poll(&self) -> Option<Option<String>> {
         self.dirty
             .swap(false, Ordering::AcqRel)
-            .then(|| current(self._mtm))
+            .then(|| current(self.mtm))
     }
 }
 

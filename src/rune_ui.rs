@@ -548,7 +548,10 @@ impl Pane {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Menu {
     Microphone,
+    /// An input source's model in keyboard model switching.
     InputSourceModel(usize),
+    /// An input source's language in keyboard model switching.
+    InputSourceLanguage(usize),
     /// The microphone under the tour's practice field.
     TourMicrophone,
     Language,
@@ -1852,29 +1855,45 @@ const SCENES: &[Scene] = &[
     // macOS and Windows surfaces, from preview data (see `platform`).
     ("mac-settings", |ui| *ui = mac_fixture()),
     ("mac-input-source-models", |ui| {
+        use crate::app_settings::KeyboardModelChoice;
         *ui = mac_fixture();
         ui.settings.keyboard_model_switching.enabled = true;
         ui.settings.keyboard_model_switching.mappings = [
             (
-                "com.apple.keylayout.ABC".into(),
+                "com.apple.keylayout.ABC",
                 TranscriptionModelId::ParakeetUnifiedEnglish,
+                "en",
             ),
             (
-                "com.apple.keylayout.Spanish".into(),
+                "com.apple.keylayout.RussianWin",
                 TranscriptionModelId::ParakeetV3,
+                "ru",
             ),
         ]
-        .into();
+        .into_iter()
+        .map(|(id, model, language)| {
+            (
+                id.into(),
+                KeyboardModelChoice {
+                    model,
+                    language: language.into(),
+                },
+            )
+        })
+        .collect();
         ui.platform.input_sources = [
-            ("com.apple.keylayout.ABC", "ABC"),
-            ("com.apple.keylayout.Spanish", "Spanish"),
-            ("com.apple.keylayout.French", "French"),
+            ("com.apple.keylayout.ABC", "ABC", "en"),
+            ("com.apple.keylayout.RussianWin", "Russian - PC", "ru"),
+            ("com.apple.keylayout.Spanish", "Spanish", "es"),
         ]
         .into_iter()
-        .map(|(id, name)| crate::keyboard_model_switching::InputSource {
-            id: id.into(),
-            name: name.into(),
-        })
+        .map(
+            |(id, name, language)| crate::keyboard_model_switching::InputSource {
+                id: id.into(),
+                name: name.into(),
+                languages: vec![language.into()],
+            },
+        )
         .collect();
         ui.picker.installed = Some(vec![
             TranscriptionModelId::ParakeetUnifiedEnglish,

@@ -1,7 +1,7 @@
 //! Runtime request/scheduling regressions; no native model loading or settings writes.
 
 use super::*;
-use crate::app_settings::KeyboardModelSwitching;
+use crate::app_settings::{KeyboardModelChoice, KeyboardModelSwitching};
 
 const WAIT: Duration = Duration::from_secs(3);
 
@@ -123,14 +123,56 @@ impl Fixture {
     }
 }
 
+/// "Spanish" mapped to `model` in the language it would get from the picker.
 fn mapped_settings(model: TranscriptionModelId) -> AppSettings {
+    let settings = AppSettings::default();
+    let language = settings.transcription_for_model(model).language;
+    mapped_settings_in(model, &language)
+}
+
+fn mapped_settings_in(model: TranscriptionModelId, language: &str) -> AppSettings {
     AppSettings {
         keyboard_model_switching: KeyboardModelSwitching {
             enabled: true,
-            mappings: [("Spanish".into(), model)].into(),
+            mappings: [(
+                "Spanish".into(),
+                KeyboardModelChoice {
+                    model,
+                    language: language.into(),
+                },
+            )]
+            .into(),
         },
         ..Default::default()
     }
+}
+
+#[test]
+fn a_mapping_to_the_current_model_in_another_language_switches_the_language() {
+    let mut settings = mapped_settings_in(TranscriptionModelId::ParakeetV3, "es");
+    settings.transcription = TranscriptionSelection {
+        model: TranscriptionModelId::ParakeetV3,
+        language: "en".into(),
+        recognition_hints: String::new(),
+    };
+    let mut fixture = Fixture::new(settings);
+    fixture.source("Spanish");
+    fixture.due();
+    let (selection, installed_only) = fixture.started();
+    assert_eq!(
+        (selection.model, selection.language.as_str(), installed_only),
+        (TranscriptionModelId::ParakeetV3, "es", true)
+    );
+    fixture.release();
+}
+
+#[test]
+fn hex_model_use_with_the_current_model_and_language_loads_nothing() {
+    let mut fixture = Fixture::new(AppSettings::default());
+    let mut same = fixture.runtime.settings.transcription.clone();
+    same.recognition_hints = "Only hints differ".into();
+    fixture.runtime.handle(Request::UseInstalledSelection(same));
+    assert_eq!(fixture.runtime.preparation.status().model, None);
 }
 
 #[test]

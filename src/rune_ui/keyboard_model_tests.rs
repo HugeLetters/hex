@@ -48,33 +48,59 @@ fn keyboard_model_switching_is_a_macos_only_saved_opt_in() {
 }
 
 #[test]
-fn keyboard_model_switching_maps_enabled_sources_to_installed_models_or_no_switch() {
+fn keyboard_model_switching_maps_enabled_sources_to_an_installed_model_and_language() {
+    use crate::app_settings::KeyboardModelChoice;
     let mut rt = runtime("mac-settings");
     rt.state.platform.input_sources = vec![crate::keyboard_model_switching::InputSource {
         id: "com.apple.keylayout.Spanish".into(),
         name: "Spanish".into(),
+        languages: vec!["es".into()],
     }];
     rt.state.picker.installed = Some(vec![TranscriptionModelId::ParakeetV3]);
     rt.invalidate();
     rt.frame(0.0);
     tap(&mut rt, "keyboard-model-switching");
+    assert!(rt.find("input-source-language0").is_none());
     tap(&mut rt, "input-source-model0-trigger");
     tap(&mut rt, "input-source-model0-item1");
-    assert_eq!(
+    let mapping = |rt: &Runtime<Ui>| {
         rt.state
             .settings
             .keyboard_model_switching
             .mappings
-            .get("com.apple.keylayout.Spanish"),
-        Some(&TranscriptionModelId::ParakeetV3)
+            .get("com.apple.keylayout.Spanish")
+            .cloned()
+    };
+    // A new mapping starts in the source's own language.
+    assert_eq!(
+        mapping(&rt),
+        Some(KeyboardModelChoice {
+            model: TranscriptionModelId::ParakeetV3,
+            language: "es".into(),
+        })
     );
+    let german = crate::transcription_models::definition(TranscriptionModelId::ParakeetV3)
+        .language_choices()
+        .iter()
+        .position(|code| *code == "de")
+        .unwrap();
+    tap(&mut rt, "input-source-language0-trigger");
+    tap(&mut rt, &format!("input-source-language0-item{german}"));
+    assert_eq!(mapping(&rt).unwrap().language, "de");
     tap(&mut rt, "input-source-model0-trigger");
     tap(&mut rt, "input-source-model0-item0");
-    assert!(
-        rt.state
-            .settings
-            .keyboard_model_switching
-            .mappings
-            .is_empty()
-    );
+    assert_eq!(mapping(&rt), None);
+    assert!(rt.find("input-source-language0").is_none());
+}
+
+#[test]
+fn a_one_language_model_shows_its_language_fixed() {
+    let rt = runtime("mac-input-source-models");
+    // ABC maps to Parakeet Unified English, which has only English.
+    assert!(rt.find("input-source-language0").is_some());
+    assert!(rt.find("input-source-language0-trigger").is_none());
+    // Russian maps to Parakeet v3, which offers a choice.
+    assert!(rt.find("input-source-language1-trigger").is_some());
+    // Spanish doesn't switch, so it has no language.
+    assert!(rt.find("input-source-language2").is_none());
 }

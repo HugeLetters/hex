@@ -173,14 +173,12 @@ impl RuntimeHandle {
                 | Request::CancelModel
                 | Request::ReloadSettings
         ) && let Some(mtm) = MainThreadMarker::new()
+            && let Some(source) = crate::keyboard_input_sources::take_change(mtm)
         {
-            // Establish the source observed at this UI/control choice before
-            // admitting it. A delayed dirty notification then cannot undo a
-            // newer manual choice or apply an edit to a stale source.
+            // Deliver a source change not yet pumped before this UI/control
+            // choice, so it cannot later undo the newer manual choice.
             self.requests
-                .send(Request::InputSourceChanged(
-                    crate::keyboard_input_sources::current(mtm),
-                ))
+                .send(Request::InputSourceChanged(source))
                 .map_err(|_| eyre!("Hex's runtime stopped"))?;
         }
         self.requests
@@ -264,12 +262,18 @@ pub fn run(shutdown: &'static AtomicBool, listener: ListenerConfig) -> Result<()
     let Some(mtm) = MainThreadMarker::new() else {
         return Err(eyre!("desktop startup requires the main thread"));
     };
-    let initial_input_source = crate::keyboard_input_sources::current(mtm);
     shutdown.store(false, Ordering::Relaxed);
     crate::keyboard::initialize_layout()?;
     crate::updater::finish_on_launch();
     let _ = UPDATER.set(crate::updater::Updater::start());
     let settings = AppSettings::load()?;
+    // Known before the observer's first report, so launching keeps the saved
+    // model instead of applying the current source's mapping.
+    let initial_input_source = settings
+        .keyboard_model_switching
+        .enabled
+        .then(|| crate::keyboard_input_sources::current(mtm))
+        .flatten();
     let setup_ready = crate::onboarding::status(&settings.transcription).ready();
     let onboarding_completed = crate::onboarding::completion_recorded();
     let history = match crate::history::History::open_default(settings.history_retention) {
@@ -567,6 +571,14 @@ fn run_runtime(
     runtime.preparation.cancel();
 }
 
+/// Two selections that load the same thing; recognition hints aside.
+pub(crate) fn same_model_and_language(
+    left: &TranscriptionSelection,
+    right: &TranscriptionSelection,
+) -> bool {
+    left.model == right.model && left.language == right.language
+}
+
 struct Runtime {
     settings: AppSettings,
     preparation: TranscriptionPreparation,
@@ -602,7 +614,8 @@ impl Runtime {
             }
             Request::UseInstalledSelection(selection) => {
                 self.manual_choice();
-                if selection != self.settings.transcription {
+                // `hex model use` replies "already in use" on the same test.
+                if !same_model_and_language(&selection, &self.settings.transcription) {
                     self.preparation.start(selection, true);
                 }
             }
@@ -664,9 +677,12 @@ impl Runtime {
     }
 
     fn tick_at(&mut self, now: Instant) {
-        if let Some(model) = self.keyboard_switcher.take_due(now) {
-            let selection = self.settings.transcription_for_model(model);
-            if selection != self.settings.transcription {
+        if let Some(choice) = self.keyboard_switcher.take_due(now) {
+            let selection = TranscriptionSelection {
+                language: choice.language,
+                ..self.settings.transcription_for_model(choice.model)
+            };
+            if !same_model_and_language(&selection, &self.settings.transcription) {
                 self.preparation.start(selection, true);
                 self.automatic_preparation = true;
             } else {
@@ -762,7 +778,6 @@ struct PumpState {
     indicator: DictationIndicatorUi,
     timer: Retained<NSTimer>,
     _menu_target: Retained<MenuTarget>,
-    input_sources: crate::keyboard_input_sources::Watcher,
 }
 
 thread_local! {
@@ -847,8 +862,14 @@ fn start_main_thread() {
     let block = RcBlock::new(|_: std::ptr::NonNull<NSTimer>| {
         PUMP.with(|slot| {
             if let Some(state) = slot.borrow_mut().as_mut() {
-                if let Some(source) = state.input_sources.poll() {
-                    let _ = state.pump.runtime.send(Request::InputSourceChanged(source));
+                if let Some(mtm) = MainThreadMarker::new() {
+                    let switching = state.pump.runtime.published().is_some_and(|published| {
+                        published.settings.keyboard_model_switching.enabled
+                    });
+                    crate::keyboard_input_sources::observe(mtm, switching);
+                    if let Some(source) = crate::keyboard_input_sources::take_change(mtm) {
+                        let _ = state.pump.runtime.send(Request::InputSourceChanged(source));
+                    }
                 }
                 state.pump.tick(&mut state.indicator);
             }
@@ -870,7 +891,6 @@ fn start_main_thread() {
             indicator,
             timer,
             _menu_target: target,
-            input_sources: crate::keyboard_input_sources::Watcher::new(mtm),
         });
     });
 }

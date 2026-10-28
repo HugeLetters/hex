@@ -341,51 +341,48 @@ interaction, installed-app switching, and Linux runtime behavior were not exerci
 
 ```ts
 General > Switch model with keyboard language   // setup.input-source-model; macOS only, off by default
-├── Enabled keyboard input sources -> Downloaded model or Don't switch
+├── Each enabled keyboard input source -> Don't switch, or a downloaded model and language
+│   ├── New mapping -> The source's own language when the model has it
+│   ├── One-language model -> Its language shown fixed
 │   └── New/unmapped source -> Don't switch; keep the current model
 ├── Source changes (shortcut, Input menu, automatic app/document switch)
 │   └── 300 ms after the last change -> Existing installed-only picker preparation
-│       ├── Success -> Save selection with the model's remembered language/hints
+│       ├── Same model and language already selected -> Nothing loads
+│       ├── Success -> Save the selection, keeping the model's remembered hints
 │       └── Failure -> Existing picker error; no download or guessed fallback
 ├── Manual model choice -> Supersede pending automatic work; do not reapply at recording start
-├── Enable, or edit the active mapping -> Apply now
-├── Disable -> Cancel automatic work; leave the selected model alone
+├── Enable -> Apply the current source's mapping once it is observed
+├── Edit the active mapping -> Apply now
+├── Disable -> Cancel automatic work; stop observing; leave the selected model alone
 └── Relaunch -> Observe current source without applying it; preserve the manual choice
 ```
 
 Mappings are keyed by macOS input-source IDs, not inferred speech languages or
-physical keyboard keys. The native host refreshes enabled selectable sources while
-Settings is open. Removing a source hides its row without erasing its saved mapping;
-an unavailable mapped model is labeled Not installed and can be cleared. Only
-installed GGUF models are offered, with downloads kept in the existing picker.
+physical keyboard keys, and store a model with a language it supports. Only
+downloaded models from the picker are offered (Apple Speech is never mapped);
+downloads stay in the picker. A mapped model that is no longer downloaded is
+labeled Not installed and can be cleared; a mapping to a model or language Hex no
+longer offers is dropped when settings load. Removing a source hides its row
+without erasing its saved mapping.
 
-The main-thread TIS distributed-notification observer works without a Settings
-window. Source changes cancel obsolete automatic work, but preserve manual
-preparation until a mapped choice is due after the debounce. An unmapped source
-cancels only automatic work. Manual choices cancel the debounce too; an unchanged
-CLI choice leaves other manual preparation alone, even with the feature off. This reuses
-the current shared model selection, recording/stream fallback, and meeting-engine
-behavior; it adds no recording-time routing, model cache, or notifications.
+Hex reads input sources only while the setting is on: the main-thread TIS
+distributed-notification observer exists only then, works without a Settings
+window, and the window lists enabled sources only then. Source changes cancel
+obsolete automatic work but keep manual preparation until a mapped choice is
+due. An unmapped source cancels only automatic work. This reuses the shared model
+selection, recording/stream fallback, and meeting-engine behavior; it adds no
+recording-time routing, model cache, or notifications.
 
 Sources: [observer](../../src/keyboard_input_sources.rs),
 [switch policy](../../src/keyboard_model_switching.rs),
 [runtime](../../src/macos_rune.rs), and
 [settings UI](../../src/rune_ui/settings.rs).
-Checks cover persisted opt-in/mappings, startup preservation, debounce/pass-through
-sources, manual cancellation, active-mapping edits, installed-only preparation,
-and UI platform visibility/mapping edits. Runtime regressions also cover manual
-preparation surviving a no-op CLI choice or pass-through source, and a due mapping
-superseding manual work even when its model is already selected; these live beside
-the runtime in [macos_rune/tests.rs](../../src/macos_rune/tests.rs).
-`mac-input-source-models` renders the enabled mapping table and is registered for
-light/dark golden comparison. Linux reference-image generation and validation,
-including the affected General-pane images, remain pending; macOS renders must
-not replace the Linux references. Native read-only probing verified enabled
-source enumeration, current-source lookup, and observer initialization/teardown.
-The author reported a successful smoke test of the installed macOS prototype.
-A controlled matrix of source-change delivery, physical menu/shortcut changes,
-automatic per-document changes, model inference, and Linux/Windows execution has
-not been run for this feature. A fixture render is not native end-to-end proof.
+Checks: the switch policy and settings/CLI validation tests, the runtime
+scheduling tests in [macos_rune/tests.rs](../../src/macos_rune/tests.rs) (macOS),
+the settings interaction tests in
+[keyboard_model_tests.rs](../../src/rune_ui/keyboard_model_tests.rs), and the
+`mac-input-source-models` golden. No check delivers native input-source
+notifications or switches sources through the Input menu or a shortcut.
 
 ### Delete downloaded models
 
