@@ -572,7 +572,7 @@ fn run_runtime(
 }
 
 /// Two selections that load the same thing; recognition hints aside.
-pub(crate) fn same_model_and_language(
+fn same_model_and_language(
     left: &TranscriptionSelection,
     right: &TranscriptionSelection,
 ) -> bool {
