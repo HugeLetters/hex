@@ -353,8 +353,11 @@ enum TranscriptionBenchmarkBackend {
 #[cfg(target_os = "macos")]
 #[derive(Subcommand)]
 enum CommandsCommand {
-    /// Create or refresh ~/.config/hex and install its pinned dependencies.
+    /// Create ~/.config/hex with a starter config, or refresh its typings.
     Init,
+    /// Load ~/.config/hex's config as Hex would and report what it registers
+    /// or why it fails.
+    Check,
     /// Turn voice commands on in the running Hex.
     Enable {
         /// Also turn off release_microphone_while_idle, which commands exclude.
@@ -652,7 +655,7 @@ fn main() -> Result<()> {
                 control::cli::CommandsAction::Retry,
                 output,
             )),
-            CommandsCommand::Init => Cli {
+            CommandsCommand::Init | CommandsCommand::Check => Cli {
                 command: Some(Command::Commands { command }),
             },
         },
@@ -854,6 +857,15 @@ fn main() -> Result<()> {
         } => {
             let workspace = personal_commands::initialize_workspace()?;
             println!("{}", workspace.display());
+            Ok(())
+        }
+        Command::Commands {
+            command: CommandsCommand::Check,
+        } => {
+            println!(
+                "{}",
+                personal_commands::check_workspace(&config::voice_control())?
+            );
             Ok(())
         }
         Command::Dev { command } => {

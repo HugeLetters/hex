@@ -2387,3 +2387,6 @@ mod tests;
 
 #[cfg(test)]
 mod keyboard_model_tests;
+
+#[cfg(test)]
+mod dmg_keycap;
