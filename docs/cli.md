@@ -328,9 +328,11 @@ an unsaved edit.
   `capture.enabled`, `capture.hotkey` (default `option+shift+s`),
   `capture.list_hotkey` (the capsule's send-to list, default
   `option+shift+v`), `capture.transcriber`, `capture.folder`,
-  `capture.media_days`, `capture.bundle_days`, `capture.routing`, and
+  `capture.media_days`, `capture.bundle_days`, `capture.routing`,
   `capture.show_overlays_in_recordings` (default off; on lets screen
-  recordings, Hex's captures included, show its overlays). Both
+  recordings, Hex's captures included, show its overlays), and
+  `capture.capsule_flow` (`list`, the default, `toast`, `menu_bar`, `cursor`
+  or `notch`: the capsule's flow after a capture, prototypes to compare). Both
   capture shortcuts need a key, and `capture.enabled on` needs both free; on
   a Mac whose Paste Last is still ⌥⇧V, rebind one of the two first.
 - `transcription.model` and `transcription.language` are read-only here: use

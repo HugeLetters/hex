@@ -27,10 +27,11 @@ pub fn audio_service_restart_generation() -> u64 {
     AUDIO_SERVICE_RESTART_GENERATION.load(Ordering::Acquire)
 }
 
-/// Advances when the OS's default input or its list of inputs changes, so
-/// an input following the system default, or standing in for a missing
-/// saved microphone, resolves again. macOS reports both through CoreAudio
-/// listeners; Windows reports a default change through its stream.
+/// Advances when the OS's default input or its list of inputs changes, or
+/// a MacBook's lid opens or closes, so an input following the system
+/// default, or standing in for a missing saved microphone, resolves again.
+/// macOS reports these through CoreAudio listeners and an IOKit interest
+/// notification; Windows reports a default change through its stream.
 pub fn input_route_generation() -> u64 {
     INPUT_ROUTE_GENERATION.load(Ordering::Acquire)
 }
@@ -113,6 +114,9 @@ pub fn watch_input_devices() {
                 tracing::warn!(status, "could not watch CoreAudio input devices");
             }
         }
+        // Closing the lid switches the built-in microphone off without
+        // changing CoreAudio's device list or default input.
+        lid::watch(notify_input_route_changed);
     });
 }
 
@@ -252,11 +256,15 @@ pub enum Selection {
     Unlisted,
     /// The saved microphone is listed but would not open.
     Unopenable,
+    /// The saved microphone is built in and off while the lid is closed.
+    LidClosed,
 }
 
 /// What resolving and opening the configured input found.
+// One is made per stream open, so the Windows stream's size doesn't matter.
+#[allow(clippy::large_enum_variant)]
 pub enum Opened {
-    Input(AudioInput),
+    Input(Box<AudioInput>),
     /// The input resolved to the device already open, which was kept.
     Unchanged {
         selection: Selection,
@@ -451,7 +459,7 @@ impl AudioInput {
             fallback: SelectedFallback::Immediate,
             keep: None,
         })? {
-            Opened::Input(input) => Ok(input),
+            Opened::Input(input) => Ok(*input),
             Opened::Unchanged { .. } => unreachable!("nothing to keep"),
         }
     }
@@ -460,8 +468,8 @@ impl AudioInput {
         let host = cpal::default_host();
         let devices = input_devices_of(&host)?;
         let names = device_names(&devices);
-        let plan =
-            resolve_input(Some(name), None, &names, None, |_| false).map_err(|e| eyre!(e))?;
+        let plan = resolve_input(Some(name), None, &names, None, |_| false, false)
+            .map_err(|e| eyre!(e))?;
         let InputTarget::Named(index) = plan.target else {
             unreachable!("an override resolves by name");
         };
@@ -603,7 +611,7 @@ impl RecoveringAudioInput {
             keep: None,
         })
         .and_then(|opened| match opened {
-            Opened::Input(input) => Ok(input),
+            Opened::Input(input) => Ok(*input),
             Opened::Unchanged { .. } => Err(eyre!("nothing was open to keep")),
         });
         input.finish_initial_open(opened, Instant::now());
@@ -669,7 +677,7 @@ impl RecoveringAudioInput {
     #[cfg(test)]
     pub fn pending_for_test() -> (Self, Sender<InputOpenResult>) {
         let mut input = Self::closed(
-            Some("HEX nonexistent microphone for pending open test"),
+            Some("Hex nonexistent microphone for pending open test"),
             0,
             None,
         );
@@ -777,7 +785,7 @@ impl RecoveringAudioInput {
                     self.after_resolving(now);
                 }
                 Ok(Opened::Input(replacement)) if capture_idle || self.input.is_none() => {
-                    self.install(replacement);
+                    self.install(*replacement);
                     self.active_revision = opened_revision;
                     self.recovery.recovered();
                     self.after_resolving(now);
@@ -888,7 +896,7 @@ impl RecoveringAudioInput {
     fn after_resolving(&mut self, now: Instant) {
         let look_again = match self.input.as_ref().map(|input| input.selection) {
             Some(Selection::Unopenable) => true,
-            Some(Selection::Unlisted) => !self.reports_new_devices,
+            Some(Selection::Unlisted | Selection::LidClosed) => !self.reports_new_devices,
             Some(Selection::InUse) | None => false,
         };
         if look_again {
@@ -924,10 +932,13 @@ enum InputTarget {
     Named(usize),
     /// The OS's default input.
     SystemDefault,
-    /// A real input standing in for a default that is Hex Microphone or
-    /// missing: the built-in microphone, else the first one listed.
+    /// A real input standing in for a default that is Hex Microphone, the
+    /// built-in microphone with the lid closed, or missing: the built-in
+    /// microphone while the lid is open, else the first usable one listed.
     StandIn(usize),
 }
+
+const LID_CLOSED_ERROR: &str = "the built-in microphone is off while the lid is closed";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct InputPlan {
@@ -938,16 +949,20 @@ struct InputPlan {
 /// Resolves the input Hex captures from: `--device` exactly as named, else
 /// the saved microphone while it is listed, else the system default. Hex
 /// never captures from its own virtual microphone, so a default that is Hex
-/// Microphone (or none) falls back to a real input.
+/// Microphone (or none) falls back to a real input. With `lid_closed`, the
+/// built-in microphone is switched off in hardware though still listed, so
+/// it is passed over the same way.
 fn resolve_input(
     device_override: Option<&str>,
     selected: Option<&str>,
     names: &[String],
     default: Option<&str>,
     is_built_in: impl Fn(usize) -> bool,
+    lid_closed: bool,
 ) -> std::result::Result<InputPlan, String> {
     let is_hex = crate::hex_microphone::is_hex_virtual_device_name;
     let position = |name: &str| names.iter().position(|listed| listed == name);
+    let off = |index: usize| lid_closed && is_built_in(index);
     if let Some(name) = device_override {
         if is_hex(name) {
             return Err(format!(
@@ -963,6 +978,7 @@ fn resolve_input(
     }
     let selection = match selected.filter(|name| !is_hex(name)) {
         Some(name) => match position(name) {
+            Some(index) if off(index) => Selection::LidClosed,
             Some(index) => {
                 return Ok(InputPlan {
                     target: InputTarget::Named(index),
@@ -974,21 +990,168 @@ fn resolve_input(
         None => Selection::InUse,
     };
     // ALSA names a default even with no devices listed.
-    if !names.is_empty() && default.is_some_and(|name| !is_hex(name)) {
+    if !names.is_empty()
+        && default.is_some_and(|name| !is_hex(name) && !position(name).is_some_and(off))
+    {
         return Ok(InputPlan {
             target: InputTarget::SystemDefault,
             selection,
         });
     }
-    let real = || (0..names.len()).filter(|&index| !is_hex(&names[index]));
-    real()
+    let usable = || (0..names.len()).filter(|&index| !is_hex(&names[index]) && !off(index));
+    usable()
         .find(|&index| is_built_in(index))
-        .or_else(|| real().next())
+        .or_else(|| usable().next())
         .map(|index| InputPlan {
             target: InputTarget::StandIn(index),
             selection,
         })
-        .ok_or_else(|| "no microphone is available".into())
+        .ok_or_else(|| {
+            if (0..names.len()).any(off) {
+                LID_CLOSED_ERROR.into()
+            } else {
+                "no microphone is available".into()
+            }
+        })
+}
+
+/// Whether a MacBook's lid is closed, which switches its built-in microphone
+/// off in hardware while CoreAudio still lists it, often as the default
+/// input. Read from `AppleClamshellState` on IOKit's power root domain;
+/// Macs without a lid, and other OSes, read open.
+#[cfg(not(target_os = "macos"))]
+fn lid_closed() -> bool {
+    false
+}
+
+#[cfg(target_os = "macos")]
+use lid::closed as lid_closed;
+
+#[cfg(target_os = "macos")]
+mod lid {
+    use std::ffi::{c_char, c_void};
+    use std::sync::OnceLock;
+
+    use objc2_core_foundation::CFString;
+
+    const MAIN_PORT_DEFAULT: u32 = 0;
+    /// `kIOPMMessageClamshellStateChange`:
+    /// `iokit_family_msg(sub_iokit_powermanagement, 0x100)`.
+    const CLAMSHELL_STATE_CHANGE: u32 = 0xE003_4100;
+
+    type InterestCallback = unsafe extern "C" fn(*mut c_void, u32, u32, *mut c_void);
+
+    #[link(name = "IOKit", kind = "framework")]
+    unsafe extern "C" {
+        fn IOServiceMatching(name: *const c_char) -> *mut c_void;
+        fn IOServiceGetMatchingService(main_port: u32, matching: *mut c_void) -> u32;
+        fn IORegistryEntryCreateCFProperty(
+            entry: u32,
+            key: *const c_void,
+            allocator: *const c_void,
+            options: u32,
+        ) -> *const c_void;
+        fn IONotificationPortCreate(main_port: u32) -> *mut c_void;
+        fn IONotificationPortSetDispatchQueue(port: *mut c_void, queue: *mut c_void);
+        fn IOServiceAddInterestNotification(
+            port: *mut c_void,
+            service: u32,
+            interest_type: *const c_char,
+            callback: InterestCallback,
+            refcon: *mut c_void,
+            notification: *mut u32,
+        ) -> i32;
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        static kCFBooleanTrue: *const c_void;
+        fn CFRelease(value: *const c_void);
+    }
+
+    unsafe extern "C" {
+        fn dispatch_get_global_queue(identifier: isize, flags: usize) -> *mut c_void;
+    }
+
+    fn root_domain() -> Option<u32> {
+        static ROOT: OnceLock<Option<u32>> = OnceLock::new();
+        *ROOT.get_or_init(|| {
+            // SAFETY: the matching dictionary is consumed by the lookup, and
+            // the returned service is kept for the life of the process.
+            let service = unsafe {
+                let matching = IOServiceMatching(c"IOPMrootDomain".as_ptr());
+                if matching.is_null() {
+                    return None;
+                }
+                IOServiceGetMatchingService(MAIN_PORT_DEFAULT, matching)
+            };
+            (service != 0).then_some(service)
+        })
+    }
+
+    pub fn closed() -> bool {
+        let Some(root) = root_domain() else {
+            return false;
+        };
+        let key = CFString::from_str("AppleClamshellState");
+        let key: *const CFString = &*key;
+        // SAFETY: `root` is a live service and `key` a live CFString; the
+        // copied property is released after the comparison.
+        unsafe {
+            let value = IORegistryEntryCreateCFProperty(root, key.cast(), std::ptr::null(), 0);
+            if value.is_null() {
+                return false;
+            }
+            let closed = value == kCFBooleanTrue;
+            CFRelease(value);
+            closed
+        }
+    }
+
+    /// Calls `changed` on a dispatch queue whenever the lid opens or closes.
+    pub fn watch(changed: fn()) {
+        static CHANGED: OnceLock<fn()> = OnceLock::new();
+        unsafe extern "C" fn on_message(
+            _refcon: *mut c_void,
+            _service: u32,
+            message: u32,
+            _argument: *mut c_void,
+        ) {
+            if message == CLAMSHELL_STATE_CHANGE
+                && let Some(changed) = CHANGED.get()
+            {
+                changed();
+            }
+        }
+        let Some(root) = root_domain() else {
+            return;
+        };
+        if CHANGED.set(changed).is_err() {
+            return;
+        }
+        // SAFETY: the port and notification live for the process, and the
+        // callback only reads a static.
+        let status = unsafe {
+            let port = IONotificationPortCreate(MAIN_PORT_DEFAULT);
+            if port.is_null() {
+                -1
+            } else {
+                IONotificationPortSetDispatchQueue(port, dispatch_get_global_queue(0, 0));
+                let mut notification = 0;
+                IOServiceAddInterestNotification(
+                    port,
+                    root,
+                    c"IOGeneralInterest".as_ptr(),
+                    on_message,
+                    std::ptr::null_mut(),
+                    &mut notification,
+                )
+            }
+        };
+        if status != 0 {
+            tracing::warn!(status, "could not watch the lid for microphone changes");
+        }
+    }
 }
 
 fn input_devices_of(host: &cpal::Host) -> Result<Vec<Device>> {
@@ -1011,6 +1174,7 @@ fn open_configured_input(request: &OpenRequest) -> Result<Opened> {
     let names = device_names(&devices);
     let default = host.default_input_device();
     let default_name = default.as_ref().map(ToString::to_string);
+    let lid_closed = lid_closed();
     let resolve = |selected: Option<&str>| {
         resolve_input(
             request.device_override.as_deref(),
@@ -1018,6 +1182,7 @@ fn open_configured_input(request: &OpenRequest) -> Result<Opened> {
             &names,
             default_name.as_deref(),
             |index| is_built_in(&devices[index]),
+            lid_closed,
         )
         .map_err(|error| eyre!(error))
     };
@@ -1040,7 +1205,8 @@ fn open_configured_input(request: &OpenRequest) -> Result<Opened> {
             tracing::warn!(
                 default = default_name.as_deref().unwrap_or("none"),
                 using = %name,
-                "the system default input is Hex Microphone or missing; using a real microphone"
+                lid_closed,
+                "the system default input is Hex Microphone, off with the lid closed, or missing; using another microphone"
             );
         }
         match plan.selection {
@@ -1053,10 +1219,14 @@ fn open_configured_input(request: &OpenRequest) -> Result<Opened> {
                 selected = request.selected_device.as_deref(),
                 "the saved microphone would not open; using the system default"
             ),
+            Selection::LidClosed => tracing::info!(
+                selected = request.selected_device.as_deref(),
+                "the saved microphone is off while the lid is closed; using the system default"
+            ),
         }
         let mut input = AudioInput::open_device(device, follows_default)?;
         input.selection = plan.selection;
-        Ok(Opened::Input(input))
+        Ok(Opened::Input(Box::new(input)))
     };
     let plan = resolve(request.selected_device.as_deref())?;
     let (Some(selected), InputTarget::Named(_), None) = (
@@ -1129,6 +1299,10 @@ pub struct InputDevices {
     pub system_default: Option<String>,
     /// The OS default is Hex Microphone, so `system_default` stands in.
     pub default_is_hex_microphone: bool,
+    /// The built-in microphone, listed but off because the lid is closed.
+    pub off_with_lid_closed: Option<String>,
+    /// The OS default is `off_with_lid_closed`, so `system_default` stands in.
+    pub default_is_off_with_lid_closed: bool,
 }
 
 pub fn input_devices() -> Result<InputDevices> {
@@ -1141,9 +1315,20 @@ pub fn input_devices() -> Result<InputDevices> {
     let default_is_hex_microphone = default
         .as_deref()
         .is_some_and(crate::hex_microphone::is_hex_virtual_device_name);
-    let system_default = resolve_input(None, None, &listed, default.as_deref(), |index| {
-        is_built_in(&devices[index])
-    })
+    let lid_closed = lid_closed();
+    let off_with_lid_closed = (0..devices.len())
+        .find(|&index| lid_closed && is_built_in(&devices[index]))
+        .map(|index| listed[index].clone());
+    let default_is_off_with_lid_closed =
+        off_with_lid_closed.is_some() && default == off_with_lid_closed;
+    let system_default = resolve_input(
+        None,
+        None,
+        &listed,
+        default.as_deref(),
+        |index| is_built_in(&devices[index]),
+        lid_closed,
+    )
     .ok()
     .and_then(|plan| match plan.target {
         InputTarget::SystemDefault => default.clone(),
@@ -1160,6 +1345,8 @@ pub fn input_devices() -> Result<InputDevices> {
         names,
         system_default,
         default_is_hex_microphone,
+        off_with_lid_closed,
+        default_is_off_with_lid_closed,
     })
 }
 
@@ -1349,7 +1536,8 @@ mod tests {
             "USB Mic",
         ]);
         let built_in = |index: usize| index == 2;
-        let plan = |selected, default| resolve_input(None, selected, &names, default, built_in);
+        let plan =
+            |selected, default| resolve_input(None, selected, &names, default, built_in, false);
         let found = |target, selection| Ok(InputPlan { target, selection });
 
         // A listed saved microphone wins over the default.
@@ -1377,7 +1565,8 @@ mod tests {
             found(StandIn(2), Selection::Unlisted)
         );
         // Without a built-in mic or any default, the first real input stands in.
-        let no_built_in = resolve_input(None, None, &names, Some("Hex Microphone"), |_| false);
+        let no_built_in =
+            resolve_input(None, None, &names, Some("Hex Microphone"), |_| false, false);
         assert_eq!(no_built_in, found(StandIn(1), Selection::InUse));
         assert_eq!(plan(None, None), found(StandIn(2), Selection::InUse));
         // A saved Hex Microphone is never captured from.
@@ -1392,17 +1581,105 @@ mod tests {
                 None,
                 &listed(&["Hex Microphone"]),
                 Some("Hex Microphone"),
-                built_in
+                built_in,
+                false
             ),
             Err("no microphone is available".into())
         );
         assert_eq!(
-            resolve_input(None, Some("USB Mic"), &[], None, built_in),
+            resolve_input(None, Some("USB Mic"), &[], None, built_in, false),
             Err("no microphone is available".into())
         );
         assert_eq!(
-            resolve_input(None, None, &[], Some("Default Audio Device"), built_in),
+            resolve_input(
+                None,
+                None,
+                &[],
+                Some("Default Audio Device"),
+                built_in,
+                false
+            ),
             Err("no microphone is available".into())
+        );
+    }
+
+    #[test]
+    fn a_closed_lid_passes_over_the_built_in_microphone() {
+        use InputTarget::{Named, StandIn, SystemDefault};
+        let names = listed(&[
+            "Hex Microphone",
+            "MacBook Pro Microphone",
+            "Studio Display Microphone",
+            "USB Mic",
+        ]);
+        let built_in = |index: usize| index == 1;
+        let closed =
+            |selected, default| resolve_input(None, selected, &names, default, built_in, true);
+        let found = |target, selection| Ok(InputPlan { target, selection });
+
+        // A built-in default stands in with the first other real input.
+        assert_eq!(
+            closed(None, Some("MacBook Pro Microphone")),
+            found(StandIn(2), Selection::InUse)
+        );
+        // So does a Hex Microphone or missing default: never the built-in.
+        assert_eq!(
+            closed(None, Some("Hex Microphone")),
+            found(StandIn(2), Selection::InUse)
+        );
+        assert_eq!(closed(None, None), found(StandIn(2), Selection::InUse));
+        // Another default is still followed.
+        assert_eq!(
+            closed(None, Some("USB Mic")),
+            found(SystemDefault, Selection::InUse)
+        );
+        // A saved built-in microphone stands aside for the default.
+        assert_eq!(
+            closed(Some("MacBook Pro Microphone"), Some("USB Mic")),
+            found(SystemDefault, Selection::LidClosed)
+        );
+        assert_eq!(
+            closed(
+                Some("MacBook Pro Microphone"),
+                Some("MacBook Pro Microphone")
+            ),
+            found(StandIn(2), Selection::LidClosed)
+        );
+        // Other saved microphones are unaffected.
+        assert_eq!(
+            closed(Some("USB Mic"), Some("MacBook Pro Microphone")),
+            found(Named(3), Selection::InUse)
+        );
+        // With the lid open the built-in microphone is used as before.
+        assert_eq!(
+            resolve_input(
+                None,
+                None,
+                &names,
+                Some("MacBook Pro Microphone"),
+                built_in,
+                false
+            ),
+            found(SystemDefault, Selection::InUse)
+        );
+        // With nothing else to use, say why rather than record silence.
+        let only_built_in = listed(&["Hex Microphone", "MacBook Pro Microphone"]);
+        for default in [Some("MacBook Pro Microphone"), Some("Hex Microphone"), None] {
+            assert_eq!(
+                resolve_input(None, None, &only_built_in, default, built_in, true),
+                Err(LID_CLOSED_ERROR.into())
+            );
+        }
+        assert_eq!(
+            resolve_input(
+                None,
+                Some("MacBook Pro Microphone"),
+                &only_built_in,
+                Some("MacBook Pro Microphone"),
+                built_in,
+                true
+            ),
+            Err(LID_CLOSED_ERROR.into())
         );
     }
 
@@ -1416,6 +1693,7 @@ mod tests {
                 &names,
                 Some("KIT PODS"),
                 |_| false,
+                false,
             )
         };
 
@@ -1476,7 +1754,7 @@ mod tests {
                         selection: Selection::InUse,
                     });
                 }
-                Ok(Opened::Input(named_input(&name)))
+                Ok(Opened::Input(Box::new(named_input(&name))))
             },
         );
         input.finish_initial_open(Ok(named_input("KIT PODS")), Instant::now());
@@ -1535,7 +1813,7 @@ mod tests {
                 }
                 let mut opened = named_input(name);
                 opened.selection = selection;
-                Ok(Opened::Input(opened))
+                Ok(Opened::Input(Box::new(opened)))
             },
         );
         input.reports_new_devices = reports_new_devices;
@@ -1759,7 +2037,9 @@ mod tests {
 
         let (sender, receiver) = mpsc::channel();
         input.replacement = Some(receiver);
-        sender.send((3, Ok(Opened::Input(replacement)))).unwrap();
+        sender
+            .send((3, Ok(Opened::Input(Box::new(replacement)))))
+            .unwrap();
         assert!(matches!(
             input.recv_timeout(Duration::ZERO, true),
             RecoveringAudioInputEvent::Reopened
@@ -1778,7 +2058,9 @@ mod tests {
         let (sender, receiver) = mpsc::channel();
         input.replacement = Some(receiver);
         let (opened, samples) = AudioInput::channel_for_test();
-        sender.send((3, Ok(Opened::Input(opened)))).unwrap();
+        sender
+            .send((3, Ok(Opened::Input(Box::new(opened)))))
+            .unwrap();
 
         assert!(matches!(
             input.recv_timeout(Duration::ZERO, true),
@@ -1801,7 +2083,7 @@ mod tests {
     #[test]
     fn startup_recovery_opens_even_when_a_capture_is_pending() {
         let mut input = RecoveringAudioInput::closed(
-            Some("HEX nonexistent microphone for pending recovery test"),
+            Some("Hex nonexistent microphone for pending recovery test"),
             3,
             None,
         );
@@ -1891,7 +2173,9 @@ mod tests {
         let (sender, receiver) = mpsc::channel();
         input.replacement = Some(receiver);
         let (reopened, samples_after) = AudioInput::channel_for_test();
-        sender.send((1, Ok(Opened::Input(reopened)))).unwrap();
+        sender
+            .send((1, Ok(Opened::Input(Box::new(reopened)))))
+            .unwrap();
 
         assert!(matches!(
             input.recv_timeout(Duration::ZERO, true),

@@ -1,6 +1,6 @@
 # Meetings (beta)
 
-Record a call locally: HEX captures the other participants (system audio) and
+Record a call locally: Hex captures the other participants (system audio) and
 you (microphone) as separate tracks, transcribes them on this Mac, and saves a
 Markdown transcript with `You` and `Them` turns. Recording starts automatically
 only for calls from a website or app set to Always record, and never stops
@@ -189,7 +189,7 @@ Brave WebRTC `getUserMedia({audio: true})` reproduction on Pro confirmed
 `com.brave.Browser` and `com.tinyspeck.slackmacgap` afterward.
 
 The capsules have no `--snap` scene. `HEX_CAPSULE_SNAPS=<folder> cargo test
---bin voice-control capsule_snapshots` renders the offer, its choices, the
+--bin hex capsule_snapshots` renders the offer, its choices, the
 calendar reminders, and the automatic-recording states in light and dark on a
 Mac with a GPU.
 
@@ -753,7 +753,7 @@ Final publication complete                               // meetings.notes
   -> Manifest: notes { title ≤8 words, summary ≤2 sentences / 400 chars,
      excerpt_chars, transcript_chars }
   -> Markdown copy, same file name, atomic replace
-     ├── Heading -> final title, only while it still reads HEX's last title
+     ├── Heading -> final title, only while it still reads Hex's last title
      ├── <!-- hex:notes --> ## Summary (one paragraph) above ## Transcript
      ├── Text outside the block is preserved; changed mid-write -> not written
      └── Missing file -> manifest only
@@ -910,7 +910,7 @@ hex mcp [--meetings-dir <path>]                     // meetings.mcp; release bui
 ├── MCP over stdio; independent of the Meetings opt-in (read-only)
 ├── Dispatches before process logging, the instance lock, GUI, and permissions
 │   └── Safe beside the running app; logs only to stderr (HEX_MCP_LOG)
-├── Default folder: Application Support/hex/meetings (voice-control on older builds)
+├── Default folder: Application Support/hex/meetings (hex on older builds)
 │   └── --meetings-dir -> any mirrored copy (rsync of that folder)
 ├── A copy named hex-meetings-mcp -> always `hex mcp` with the same flags
 │   (no subcommand never falls back to listening)
@@ -977,7 +977,7 @@ text as one document.
 Semantic search is not shipped. On-device candidates are Apple NaturalLanguage
 `NLContextualEmbedding` (asset download, macOS 14+) or the older static
 `NLEmbedding` sentence model, through a Swift bridge like `apple_speech`, with a
-cache under `~/Library/Caches/voice-control/meeting-index` keyed by meeting
+cache under `~/Library/Caches/hex/meeting-index` keyed by meeting
 fingerprints. Full-text with stemming and fuzzy matching answered the real
 queries below; embeddings wait until a query fails for lack of paraphrase.
 
@@ -1024,7 +1024,7 @@ Do: one periodic pull, then local servers               // meetings.mcp.mirror
 scripts/sync-meetings-mirror.sh (LaunchAgent template, every 120 s,
   ProcessType Background, Nice 10, LowPriorityIO)
 ├── ONE rsync over ssh (BatchMode, ConnectTimeout 5, --timeout 60)
-│   pro:Library/Application Support/voice-control/meetings/ (symlink to hex/ once migrated)
+│   pro:Library/Application Support/hex/meetings/
 │   -> ~/Library/Caches/hex-meetings-mirror/ (0700)
 ├── Skips *.wav, *.lock, *.tmp; --delay-updates (files land together at the
 │   end); --delete-delay (meetings trashed on the Pro disappear)

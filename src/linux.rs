@@ -118,7 +118,7 @@ enum ModelCommand {
     Status,
     /// Download and checksum-verify the default dictation model.
     Install,
-    /// List transcribe.cpp compute devices available to HEX.
+    /// List transcribe.cpp compute devices available to Hex.
     Devices,
     /// Load and prewarm the installed model.
     Check,

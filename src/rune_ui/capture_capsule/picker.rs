@@ -1006,7 +1006,7 @@ pub(crate) fn view(s: &PickerState, cx: &mut Cx<PickerState>) -> El {
             .combined(Transition::scale(if reduced { 1.0 } else { 0.96 }))
             .springs(rune::SpringPair::new(
                 FADE,
-                super::tuning::get().presence_exit,
+                super::tuning::get().content_out,
             ));
         let mut pill = row()
             .key("badge")

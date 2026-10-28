@@ -327,12 +327,22 @@ pub(crate) fn follow(capsule: CaptureCapsule, ink: InkOverlay) {
         .spawn(move || {
             let watch = crate::capture_host::watch();
             let mut follow = Follow::default();
+            let images = rune::ImageCache::new(std::sync::Arc::new(|| {}));
             loop {
                 let Some(snapshot) = watch.wait(Duration::from_secs(3600)) else {
                     continue;
                 };
                 ink.wake();
-                for input in follow.next(&snapshot) {
+                let inputs = follow.next(&snapshot);
+                // The first frame goes ahead of "Copied", so the capsule
+                // lands with it rather than swapping its check a moment on.
+                if inputs.contains(&Input::Stage(Stage::Done))
+                    && let Some((bundle, _)) = &follow.shown
+                    && let Some(image) = first_frame(&images, bundle)
+                {
+                    capsule.thumbnail(image);
+                }
+                for input in inputs {
                     capsule.input(match input {
                         // The common first-capture failure: the engine's
                         // own reason for it is a ScreenCaptureKit error.
@@ -349,6 +359,20 @@ pub(crate) fn follow(capsule: CaptureCapsule, ink: InkOverlay) {
     if let Err(error) = spawned {
         tracing::warn!(%error, "could not start the capture capsule's thread");
     }
+}
+
+/// A written capture's first keyframe (or its contact sheet), decoded on
+/// the image cache's worker while this thread waits; `None` when neither
+/// reads or decodes.
+fn first_frame(images: &rune::ImageCache, bundle: &std::path::Path) -> Option<rune::Image> {
+    ["frames/frame-01.png", "contact-sheet.png"]
+        .into_iter()
+        .find_map(|name| {
+            let bytes = std::fs::read(bundle.join(name)).ok()?;
+            let image = images.load(bytes);
+            image.wait().ok()?;
+            Some(image)
+        })
 }
 
 /// Carries out a press or key on the capsule: Finish and Cancel end the
@@ -745,20 +769,20 @@ mod tests {
         let mut follow = Follow::default();
         follow.next(&recording("a"));
         let guess = || RouteAnswer::Guess {
-            suggested: vec![dest("HEX", "guess")],
+            suggested: vec![dest("HEX", "same page")],
             recent: Vec::new(),
             site: None,
         };
         follow.next(&routed("a", guess(), None));
         let queued = Some(RouteDelivery::Queued {
             to: "HEX".into(),
-            why: "OpenCode can't see this Mac's files".into(),
+            why: "OpenCode can't see files".into(),
         });
         assert_eq!(
             follow.next(&routed("a", guess(), queued)),
             [Input::Delivered(Delivered::Queued {
                 to: "HEX".into(),
-                why: "OpenCode can't see this Mac's files".into(),
+                why: "OpenCode can't see files".into(),
             })]
         );
         let sent = Some(RouteDelivery::Sent { to: "HEX".into() });

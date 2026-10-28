@@ -7,10 +7,10 @@ use std::time::{Duration, Instant};
 use rune::{Edge, El, Key, KeyEvent, Transition, Tx, col, row, spacer, text};
 
 use super::controls::{
-    ButtonKind, CardRow, Choice, DESCRIPTION, DEVICE_SELECT_WIDTH, KEY_GAP, KeySize, Paint, button,
-    described_row, folding, icon_button, key_tray, keycap, keycaps, link_row, note, pulsing_dot,
-    section, segmented, select, select_sized, setting_row, sheet_button, status_dot, text_field,
-    toggle_row, tray_roll,
+    ButtonKind, CardRow, Choice, DESCRIPTION, DEVICE_SELECT_WIDTH, KEY_GAP, KeySize, METRICS,
+    Paint, button, described_row, folding, icon_button, key_tray, keycap, keycaps, link_row, note,
+    page, pulsing_dot, section, section_with, segmented, select, select_sized, setting_row,
+    sheet_button, status_dot, text_field, toggle_row, tray_roll,
 };
 use super::{Menu, Request, Service, ShortcutTarget, Ui};
 use super::{explainer, host};
@@ -21,7 +21,7 @@ use crate::app_settings::{
 use crate::desktop_host::{
     DesktopAction, DesktopGrantedShortcut, DesktopShortcut, DesktopShortcuts, DesktopUpdateStatus,
 };
-use crate::desktop_i18n::{tr, tr_fill};
+use crate::desktop_i18n::{tr, tr_fill, tr_named};
 use crate::dictation::ShortcutMode;
 use crate::transcription_models::{self, ModelPreparationStage};
 
@@ -369,7 +369,7 @@ fn sound_volume_index(settings: &AppSettings) -> usize {
 
 pub(super) fn toggle_menu(ui: &mut Ui, menu: Menu) {
     ui.open = (ui.open != Some(menu)).then_some(menu);
-    if ui.open == Some(Menu::Microphone) {
+    if matches!(ui.open, Some(Menu::Microphone | Menu::TourMicrophone)) {
         refresh_microphones(ui);
     }
 }
@@ -412,6 +412,60 @@ pub(super) fn poll_microphones(ui: &mut Ui) -> bool {
     changed
 }
 
+/// A saved microphone the input list no longer names. Only a list that
+/// names inputs can tell.
+pub(super) fn missing_microphone(ui: &Ui) -> Option<&str> {
+    let listed = ui.microphones.as_ref().ok();
+    ui.settings.microphone.as_deref().filter(|saved| {
+        listed.is_some_and(|devices| {
+            !devices.names.is_empty() && !devices.names.iter().any(|name| name == saved)
+        })
+    })
+}
+
+/// The microphone menu's choices, shared by General and the tour: System
+/// default with the input it resolves to, every listed input, and a saved
+/// one that is missing. Choosing saves through `Ui::update`.
+pub(super) fn microphone_choices(ui: &Ui) -> Vec<Choice> {
+    let settings = &ui.settings;
+    let listed = ui.microphones.as_ref().ok();
+    let off = listed.and_then(|devices| devices.off_with_lid_closed.as_deref());
+    let mut devices = vec![Choice {
+        label: tr("System default").to_owned(),
+        detail: listed.and_then(|devices| devices.system_default.clone()),
+        selected: settings.microphone.is_none(),
+        choose: Box::new(|ui: &mut Ui| {
+            ui.open = None;
+            ui.update(|settings| settings.microphone = None);
+        }),
+    }];
+    if let Some(listed) = listed {
+        devices.extend(listed.names.iter().map(|device| {
+            let name = device.clone();
+            Choice {
+                label: device.clone(),
+                detail: (off == Some(device.as_str()))
+                    .then(|| tr("off while the lid is closed").to_owned()),
+                selected: settings.microphone.as_deref() == Some(device),
+                choose: Box::new(move |ui: &mut Ui| {
+                    ui.open = None;
+                    let name = name.clone();
+                    ui.update(|settings| settings.microphone = Some(name));
+                }),
+            }
+        }));
+    }
+    if let Some(saved) = missing_microphone(ui) {
+        devices.push(Choice {
+            label: saved.to_owned(),
+            detail: Some(tr("not connected").to_owned()),
+            selected: true,
+            choose: Box::new(|ui: &mut Ui| ui.open = None),
+        });
+    }
+    devices
+}
+
 pub(super) fn error_notes(p: Paint, error: &str) -> [El; 2] {
     [
         note(
@@ -429,10 +483,7 @@ pub(super) fn error_notes(p: Paint, error: &str) -> [El; 2] {
 /// the sidebar's version.
 pub(super) fn pane(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> El {
     use super::platform_settings as os;
-    let mut content = col()
-        .key("content")
-        .px(24.0)
-        .gap(16.0)
+    let mut content = page("content")
         .children(os::permissions_section(ui, p))
         .children(os::error_section(ui, p));
     if ui.platform.caps.listener_control {
@@ -507,8 +558,8 @@ fn listener_card(ui: &Ui, p: Paint) -> El {
     };
     let summary = row()
         .key("listener")
-        .min_h(64.0)
-        .px(12.0)
+        .min_h(METRICS.row_h_described)
+        .px(METRICS.row_px)
         .py(8.0)
         .gap(12.0)
         .center_y()
@@ -810,26 +861,18 @@ fn dictation_section(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> El {
             )
         }),
     ));
-    let selection = &settings.transcription;
-    let model = transcription_models::definition(selection.model);
-    let label = format!(
-        "{} · {}",
-        transcription_models::language_name(&selection.language),
-        model.name
-    );
-    let language = selection.language.clone();
+    let model = transcription_models::definition(settings.transcription.model);
     rows.push(
         described_row(
             p,
             "transcription",
             tr("Speech model"),
             transcription_status(ui, p),
-            sheet_button(p, "transcription-control", &label, move |ui: &mut Ui| {
-                super::picker::open(ui, language.clone())
-            }),
+            sheet_button(p, "transcription-control", model.name, super::picker::open),
         )
         .into(),
     );
+    rows.push(super::picker::language_row(ui, p, layer).into());
     if ui.platform.caps.keyboard_model_switching {
         rows.push(
             toggle_row(
@@ -861,22 +904,31 @@ fn dictation_section(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> El {
     }
     let listed = ui.microphones.as_ref().ok();
     let default_name = listed.and_then(|devices| devices.system_default.as_deref());
-    // Only a list that names inputs can tell a saved microphone is missing.
-    let missing = settings.microphone.as_deref().filter(|saved| {
-        listed.is_some_and(|devices| {
-            !devices.names.is_empty() && !devices.names.iter().any(|name| name == saved)
-        })
-    });
+    let missing = missing_microphone(ui);
+    // A MacBook's built-in microphone is off while its lid is closed.
+    let off = listed.and_then(|devices| devices.off_with_lid_closed.as_deref());
+    let saved_off = settings
+        .microphone
+        .as_deref()
+        .filter(|saved| off == Some(*saved));
     // System default's choice, with the input it resolves to in faint text.
     let system_detail = default_name.map(str::to_owned);
     // The field always names the input in use, so a missing saved
     // microphone shows the system default standing in for it.
-    let (microphone, microphone_detail) = match (&settings.microphone, missing) {
+    let (microphone, microphone_detail) = match (&settings.microphone, missing.or(saved_off)) {
         (Some(saved), None) => (saved.clone(), None),
-        _ => (tr("System default").to_owned(), system_detail.clone()),
+        _ => (tr("System default").to_owned(), system_detail),
     };
     let mac = ui.platform.caps.os == super::platform::Os::Macos;
+    let lid_note = |built_in: &str| match default_name {
+        Some(name) => tr_named(
+            "{built_in} is off while the lid is closed, so Hex listens to {input}",
+            &[("built_in", built_in), ("input", name)],
+        ),
+        None => tr_fill("{} is off while the lid is closed", built_in),
+    };
     let microphone_note = listed.and_then(|devices| match &settings.microphone {
+        Some(_) if saved_off.is_some() => saved_off.map(lid_note),
         Some(_) => missing.map(|saved| {
             if mac {
                 tr_fill("{} isn't connected; using your Mac's input", saved)
@@ -890,40 +942,10 @@ fn dictation_section(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> El {
                 name,
             )
         }),
+        None if devices.default_is_off_with_lid_closed => off.map(lid_note),
         None => None,
     });
-    let mut devices = vec![Choice {
-        label: tr("System default").to_owned(),
-        detail: system_detail,
-        selected: settings.microphone.is_none(),
-        choose: Box::new(|ui: &mut Ui| {
-            ui.open = None;
-            ui.update(|settings| settings.microphone = None);
-        }),
-    }];
-    if let Ok(listed) = &ui.microphones {
-        devices.extend(listed.names.iter().map(|device| {
-            let name = device.clone();
-            Choice {
-                label: device.clone(),
-                detail: None,
-                selected: settings.microphone.as_deref() == Some(device),
-                choose: Box::new(move |ui: &mut Ui| {
-                    ui.open = None;
-                    let name = name.clone();
-                    ui.update(|settings| settings.microphone = Some(name));
-                }),
-            }
-        }));
-    }
-    if let Some(saved) = missing {
-        devices.push(Choice {
-            label: saved.to_owned(),
-            detail: Some(tr("not connected").to_owned()),
-            selected: true,
-            choose: Box::new(|ui: &mut Ui| ui.open = None),
-        });
-    }
+    let devices = microphone_choices(ui);
     rows.push(
         setting_row(
             p,
@@ -982,24 +1004,14 @@ fn dictation_section(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> El {
             Vec::new()
         },
     ));
-    col()
-        .key("dictation")
-        .gap(6.0)
-        .child(
-            row()
-                .key("header-row")
-                .center_y()
-                .child(
-                    text(tr("Dictation"))
-                        .key("header")
-                        .font(p.k.ty.ui_medium.lh(16.0))
-                        .color(p.k.c.text_muted)
-                        .ml(12.0)
-                        .grow(1.0),
-                )
-                .child(advanced_toggle(ui, p, pinned)),
-        )
-        .child(super::controls::card(p, "card", rows))
+    // The toggle's word ends on the box's edge, its hover reaching past it.
+    section_with(
+        p,
+        "dictation",
+        tr("Dictation"),
+        advanced_toggle(ui, p, pinned).mr(-6.0),
+        rows,
+    )
 }
 
 fn input_source_rows(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> Vec<El> {

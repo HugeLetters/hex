@@ -9,15 +9,19 @@ the release service itself: Hex never publishes to it or reads from it. Builds
 are tested before stable on the production service's `dev` channel.
 
 Like OpenCode's release, building is split from everything that holds a
-secret. `.github/workflows/release.yml` and `.github/release/` are the
-security boundary:
+secret. `.github/workflows/` (Release, Site deploy, Legacy appcast) and
+`.github/release/` are the security boundary:
 
 - **Build jobs** run repository code (cargo, build.rs, bun, makepkg, brew)
   with no environment, no secret, and no id-token, and make unsigned files.
 - **Sign and publish jobs** run in the `release` environment, check out only
   `.github/release/` (sparse checkout), and run only those scripts and
   SHA-pinned actions, on artifacts they treat as data. They never build,
-  install dependencies, or run repository code or the artifacts.
+  install dependencies, or run repository code or the artifacts. The one
+  installed tool is the cf CLI that deploys the site, pinned with its
+  integrity hashes in `.github/release/cf/package-lock.json` and installed
+  with `npm ci --ignore-scripts` before the token is in the step's
+  environment.
 - **Artifacts** each carry a `SHA256SUMS`; the job that made one reports that
   manifest's digest as a job output, and every job that downloads it checks
   the digest and every file (`.github/release/verify-artifacts.sh`), so
@@ -26,7 +30,8 @@ security boundary:
 ```ts
 Release (push to dev: dev channel; workflow_dispatch: ref + channel check | dev | stable (from production))
 ├─ plan                     .github/release/plan.sh: version, channel, tag, notes
-├─ build                    build-desktop.yml: Linux x86_64 (Arch), Windows x64 + ARM64, unsigned   [build]
+├─ build                    build-desktop.yml: Linux x64 + ARM64 (Ubuntu 24.04) executables, .deb,  [build]
+│                           .rpm (installed and run on Ubuntu and Fedora); Windows x64 + ARM64
 ├─ build-macos              Hex.app as anomaly.hex, ad-hoc signed (HEX_RELEASE_UNSIGNED)             [build]
 ├─ sign-macos               Developer ID inside-out, notarize + staple, ZIP + DMG (sign-macos.sh)     [release]
 ├─ verify-macos             validate-app.sh, Gatekeeper, updater requirement, launch                 [build]
@@ -37,7 +42,7 @@ Release (push to dev: dev channel; workflow_dispatch: ref + channel check | dev 
 ├─ github                   last: tag v<version> on the released commit (tag-release.sh), then the    [contents: write]
 │                           GitHub release mirror (publish-github-release.sh); GITHUB_TOKEN only.
 │                           check: pushes and deletes a throwaway v0.0.0-test-<run> tag
-├─ aur-stage → aur          stable: makepkg + install from the published file → push-aur.sh           [build → release]
+├─ aur-stage → aur          stable: makepkg + install from the published files → push-aur.sh          [build → release]
 ├─ homebrew-stage → homebrew stable: render + brew style/audit → push-homebrew.sh                     [build → release]
 └─ record-aur, record-brew  OIDC: the package manager serves the version                              [release]
 ```
@@ -96,11 +101,13 @@ token, and the Windows signing jobs one for Azure.
 
 `publish` uploads each file under its own name with its SHA-256 (files over
 95 MiB in 90 MiB parts), then posts the release naming each target by file
-and hash, with distributions `direct`, `aur` (`hex-bin`), `brew`
-(`anomalyco/tap/hex`), and `nix`. It then downloads every published URL and
-compares it with the local bytes. Package-manager entries gain a version only
-once that package manager serves it: `nix` at publish (the flake builds the
-release commit), `aur` after the push, and `brew` after the cask push. Manifests are not signed;
+and hash, with distributions `direct`, `aur` (`hex-bin`), `deb-x64`,
+`deb-arm64`, `rpm-x64`, `rpm-arm64`, `brew` (`anomalyco/tap/hex`), and `nix`.
+It then downloads every published URL and compares it with the local bytes.
+Package-manager entries gain a version only once that package manager serves
+it: `nix` and the `deb`/`rpm` kinds at publish (the flake builds the release
+commit; the packages are files of the release), `aur` after the push, and
+`brew` after the cask push. Manifests are not signed;
 clients check HTTPS, each file's size and SHA-256, and the OS code signature
 (Developer ID on macOS, Authenticode on Windows). Linux has only the hash.
 
@@ -135,7 +142,8 @@ secrets; the `homebrew` job pushes that verified file with the tap deploy key
   Every build is stamped with its channel (`HEX_BUILD_CHANNEL`); an install
   whose Update channel setting names another channel offers that channel's
   current release ("Switch to Stable 2.3.1") and switches only once the user
-  confirms. The first build after this change, 2.3.2-dev.<run> on
+  confirms. Source, local (`HEX_LOCAL_BUILD=1`) and test builds never check or offer
+  a switch. The first build after this change, 2.3.2-dev.<run> on
   2026-10-27, carried the new client to installs whose older client took only
   higher versions; every build since is `0.0.0-dev-<run>`. It publishes only signed builds, because the
   updater checks signatures: until `release` has the Apple secrets it has
@@ -239,9 +247,30 @@ forbids, so until the freeze lifts the link works only on dev
 (`https://dev.anoma.ly/hex/download/dev`, which reads the dev service).
 
 Deploys run only from CI (`.github/workflows/site.yml` and `site-deploy.yml`):
-a push to `dev` that touches `site/` deploys dev; a stable Release deploys
-production after publishing, and Site can be dispatched with `mode:
-production` from `production` only. `bun run check:downloads` runs after each deploy.
+a push to `dev` that touches `site/` deploys dev, and Site can be dispatched
+with `mode: production` from `production` only (after a stable release).
+Site deploy is split like Release:
+
+```ts
+Site deploy (mode dev | production)
+├─ build    bun install + site/scripts/build.ts --mode <mode>, no environment or secret;   [build]
+│           uploads site/.cloudflare/output (Build Output) with its SHA256SUMS digest
+├─ deploy   sparse checkout of .github/release/; npm ci the pinned cf CLI; verify the     [release]
+│           artifact's digest; deploy-site.sh <mode>
+└─ verify   the live site answers 200 and bun run check:downloads, no secret               [build]
+```
+
+The site's Worker code and assets come from repository code anyone with push
+access can merge, so `.github/release/deploy-site.sh` treats the artifact as
+untrusted: it deploys only the Build Output files, and only if the root config
+is a non-preview build of that mode and the Worker config is exactly that
+mode's Worker (`hex-dev-site` or `hex-production-site`), its two `anoma.ly`
+routes, `workersDev`/`previewUrls` off, and the bindings `ASSETS`, `FILES`
+(that mode's bucket), and `CANONICAL_HOST`. Any other Worker name, route,
+binding, key, Worker, or Container is refused: a binding would give the
+Worker access to another resource, and the token can write every Worker. A
+change to those parts of `site/cloudflare.config.ts` therefore needs the
+matching change in `deploy-site.sh` (Dax).
 
 Set once by hand on the anomaly account, because the config only binds them:
 the two buckets (`cf deploy` provisions only unnamed bindings; a missing named
@@ -250,11 +279,21 @@ bucket fails the deploy), the `expire-staging` lifecycle rule on
 Browser Integrity Check for `/hex/files/` on both hosts (it returned 403 to
 Python's default user agent).
 
-One account token, `github-actions-hex`, holds Workers Scripts Write (account),
-Workers Routes Write (anoma.ly), and object read/write on the two Hex buckets.
-It is the `release` environment's `CLOUDFLARE_API_TOKEN` (site deploys); the
-same token's S3 credentials (`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`) are
-used only for the one-time legacy appcast below (`scripts/r2-put.sh`).
+Two account tokens, each used by one locked step only:
+
+- `hex-site-deploy` (`release` secret `CLOUDFLARE_API_TOKEN`): Workers Scripts
+  Write (account) and Workers Routes Write (zone `anoma.ly`), used only by
+  `deploy-site.sh`. It has no R2 access: deploying a binding needs none.
+  Cloudflare supports per-Worker roles (Individual Workers Editor) that would
+  limit it to the two site Workers, but they can be granted only from the
+  dashboard or by an API token, not by the `cf` OAuth login; until it is
+  recreated that way, `deploy-site.sh`'s Worker-name check is the limit.
+  Routes are always written on deploy, and `cf` then needs Routes Write on the
+  zone. Recreate rather than edit a token's policies: an edited policy did not
+  take effect on the routes API in testing.
+- `hex-r2-production-files` (`release` secret `R2_SECRET_ACCESS_KEY`, variable
+  `R2_ACCESS_KEY_ID` = its id): object write on `hex-production-files` only,
+  used only by the Legacy appcast workflow (`.github/release/r2-put.sh`).
 
 ## Old clients (2.3.1 and earlier)
 
@@ -312,8 +351,8 @@ it. No reviewer is required.
 | Name | Use |
 | --- | --- |
 | (none) | publishing to the release service: the job's GitHub OIDC token |
-| `CLOUDFLARE_API_TOKEN`, var `CLOUDFLARE_ACCOUNT_ID` | site deploys (`github-actions-hex`) |
-| `R2_SECRET_ACCESS_KEY`, var `R2_ACCESS_KEY_ID` | the one-time legacy appcast upload (same token) |
+| `CLOUDFLARE_API_TOKEN`, var `CLOUDFLARE_ACCOUNT_ID` | site deploys (`hex-site-deploy`, used only by `deploy-site.sh`) |
+| `R2_SECRET_ACCESS_KEY`, var `R2_ACCESS_KEY_ID` | the one-time legacy appcast upload (`hex-r2-production-files`) |
 | `AUR_SSH_PRIVATE_KEY` | pushes `hex-bin` (key `github-actions-hex-aur`) |
 | `HOMEBREW_TAP_DEPLOY_KEY` | pushes `Casks/hex.rb` (deploy key `github-actions-hex-homebrew`, write access on `anomalyco/homebrew-tap` only) |
 | `AZURE_*` | Authenticode (docs/windows-signing.md) |
@@ -329,14 +368,34 @@ it. No reviewer is required.
 - **AUR** `hex-bin` (`packaging/aur`, staged by `scripts/release-aur.sh`, pushed by `.github/release/push-aur.sh`):
   `/usr/bin/hex`, the desktop entry, and the systemd user unit
   `/usr/lib/systemd/user/hex.service`, from the release service's
-  `linux-x64` file. Not a prebuilt of the official `extra/hex` (a hex dump tool
+  `linux-x64` (`x86_64`) or `linux-arm64` (`aarch64`) file. Not a prebuilt of the official `extra/hex` (a hex dump tool
   that installs `/usr/bin/hx`), so it neither provides nor conflicts with it;
   its description says so. Maintained under Dax's AUR account.
+- **.deb and .rpm** `hex` (`packaging/linux/nfpm.yaml`, built by
+  `scripts/package-linux.sh` with nfpm in the build jobs): the same three
+  files as the AUR package, for x64 and arm64, published as
+  `linux-<arch>-deb` and `linux-<arch>-rpm` (`hex.deb`, `hex.rpm`). There is no
+  apt or dnf repository: the release service's `deb-<arch>`/`rpm-<arch>`
+  distributions carry the command that downloads the stable package from its
+  alias link and installs it with `apt` or `dnf`. Dependencies name Ubuntu
+  24.04 packages (either name across its 64-bit time_t rename) and, for rpm,
+  shared libraries, so Fedora and openSUSE both resolve them. Package versions
+  turn the first hyphen into a tilde (`0.0.0~dev.42`, `2.5.0~beta.1`).
 - **Nix**: `nix/package.nix` builds from source; flake inputs update it.
 - **Source** (`scripts/install-linux.sh`): the version layout with a
   `source-build` marker; the checkout updates it.
 
-An executable outside the user-local layout that the user does not own (pacman's
-`/usr/bin/hex`) or that lives in the Nix store never self-updates; Settings says
+An executable outside the user-local layout that the user does not own and
+pacman, dpkg, or rpm owns (`/usr/bin/hex`), or that lives in the Nix store,
+never self-updates; Settings says
 "Updated by your package manager". Source installs say "Updated from your
 source checkout".
+
+Both Linux architectures build natively on Ubuntu 24.04 runners
+(`ubuntu-24.04`, `ubuntu-24.04-arm`), so every Linux file needs glibc 2.39
+(Ubuntu 24.04, Debian 13, Fedora 40, current Arch) instead of the newest
+glibc of an Arch build. ARM64 keeps the Vulkan backend like x64; ggml's CPU
+kernels stay portable (`GGML_NATIVE=OFF`, baseline ARMv8-A). There is no
+AppImage: the bare executable already runs without installing, and Hex's
+systemd user unit and updater want a stable executable path that an AppImage
+does not have.
