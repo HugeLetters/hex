@@ -754,10 +754,8 @@ impl NativeHost for MacHost {
         }
         self.refresh_at = Instant::now() + PLATFORM_REFRESH;
         // Input sources are read only while keyboard model switching is on.
-        let switching = self
-            .runtime
-            .as_ref()
-            .and_then(RuntimeHandle::published)
+        let switching = crate::macos_rune::runtime()
+            .and_then(|runtime| runtime.published())
             .is_some_and(|published| published.settings.keyboard_model_switching.enabled);
         if let Some(mtm) = objc2::MainThreadMarker::new() {
             changed |= update(
