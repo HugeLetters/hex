@@ -572,10 +572,7 @@ fn run_runtime(
 }
 
 /// Two selections that load the same thing; recognition hints aside.
-fn same_model_and_language(
-    left: &TranscriptionSelection,
-    right: &TranscriptionSelection,
-) -> bool {
+fn same_model_and_language(left: &TranscriptionSelection, right: &TranscriptionSelection) -> bool {
     left.model == right.model && left.language == right.language
 }
 
